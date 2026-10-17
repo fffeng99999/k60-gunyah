@@ -57,9 +57,8 @@ make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" modules_prepare
 install -m 0644 "$ROOT/config/Module.symvers" "$KERNEL_SRC/Module.symvers"
 make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" M="$ROOT/kernel" modules
 
-for module in gunyah_probe gh_vmmgr; do
-    install -m 0644 "$ROOT/kernel/$module.ko" "$OUT_DIR/$module.ko"
-done
+install -m 0644 "$ROOT/kernel/gunyah_probe.ko" "$OUT_DIR/gunyah_probe.ko"
+install -m 0644 "$ROOT/kernel/vmmgr/gh_vmmgr.ko" "$OUT_DIR/gh_vmmgr.ko"
 
 for module in gunyah_probe gh_vmmgr; do
     MODULE_VERMAGIC="$(modinfo -F vermagic "$OUT_DIR/$module.ko" 2>/dev/null || true)"
