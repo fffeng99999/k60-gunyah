@@ -43,6 +43,7 @@
 static dev_t gh_vmmgr_dev;
 static struct cdev gh_vmmgr_cdev;
 static struct class *gh_vmmgr_class;
+static struct device *gh_vmmgr_device;
 
 static DEFINE_MUTEX(gh_vmmgr_lock);
 static unsigned int gh_vmmgr_vmid;
@@ -104,14 +105,13 @@ static int gh_vmmgr_release_vmid(void)
 	return ret;
 }
 
-static int gh_vmmgr_query_vminfo(struct gh_vmmgr_vminfo __user *info)
+static int gh_vmmgr_collect_vminfo(struct gh_vmmgr_vminfo *out)
 {
-	struct gh_vmmgr_vminfo out;
 	struct gh_vminfo rm_info;
 	gh_vmid_t primary = GH_VMID_INVAL;
 	int ret;
 
-	memset(&out, 0, sizeof(out));
+	memset(out, 0, sizeof(*out));
 	memset(&rm_info, 0, sizeof(rm_info));
 
 	ret = gh_rm_get_vmid(GH_PRIMARY_VM, &primary);
@@ -119,16 +119,28 @@ static int gh_vmmgr_query_vminfo(struct gh_vmmgr_vminfo __user *info)
 		pr_warn("gh_rm_get_vmid(primary) failed: %d\n", ret);
 		primary = GH_VMID_INVAL;
 	}
-	out.primary_vmid = primary;
+	out->primary_vmid = primary;
 
 	ret = gh_rm_get_vminfo(GH_PRIMARY_VM, &rm_info);
 	if (!ret) {
-		out.has_uri = rm_info.uri && rm_info.uri[0];
-		out.has_name = rm_info.name && rm_info.name[0];
+		out->has_uri = rm_info.uri && rm_info.uri[0];
+		out->has_name = rm_info.name && rm_info.name[0];
 	}
 
 	if (gh_vmmgr_registered)
-		out.allocated_vmid = gh_vmmgr_vmid;
+		out->allocated_vmid = gh_vmmgr_vmid;
+
+	return 0;
+}
+
+static int gh_vmmgr_query_vminfo(struct gh_vmmgr_vminfo __user *info)
+{
+	struct gh_vmmgr_vminfo out;
+	int ret;
+
+	ret = gh_vmmgr_collect_vminfo(&out);
+	if (ret)
+		return ret;
 
 	if (copy_to_user(info, &out, sizeof(out)))
 		return -EFAULT;
@@ -216,8 +228,13 @@ static int __init gh_vmmgr_init(void)
 		goto err_del_cdev;
 	}
 
-	device_create(gh_vmmgr_class, NULL, gh_vmmgr_dev, NULL,
-		      GH_VMMGR_DEVICE_NAME);
+	dev = device_create(gh_vmmgr_class, NULL, gh_vmmgr_dev, NULL,
+			    GH_VMMGR_DEVICE_NAME);
+	if (IS_ERR(dev)) {
+		ret = PTR_ERR(dev);
+		pr_err("device_create failed: %d\n", ret);
+		goto err_destroy_class;
+	}
 
 	pr_info("Gunyah VM manager (additive) loaded\n");
 	pr_info("device /dev/%s created; autoload is off by default\n",
@@ -227,18 +244,16 @@ static int __init gh_vmmgr_init(void)
 		struct gh_vmmgr_vminfo probe;
 
 		mutex_lock(&gh_vmmgr_lock);
-		ret = gh_vmmgr_query_vminfo(&probe);
+		ret = gh_vmmgr_collect_vminfo(&probe);
 		mutex_unlock(&gh_vmmgr_lock);
-		if (ret) {
-			pr_warn("probe_rm: query failed: %d\n", ret);
-		} else {
-			pr_info("probe_rm: primary_vmid=%u uri=%u name=%u\n",
-				probe.primary_vmid, probe.has_uri, probe.has_name);
-		}
+		pr_info("probe_rm: ret=%d primary_vmid=%u has_uri=%u has_name=%u\n",
+			ret, probe.primary_vmid, probe.has_uri, probe.has_name);
 	}
 
 	return 0;
 
+err_destroy_class:
+	class_destroy(gh_vmmgr_class);
 err_del_cdev:
 	cdev_del(&gh_vmmgr_cdev);
 err_unregister_chrdev:
