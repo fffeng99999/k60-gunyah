@@ -1,0 +1,106 @@
+name: build-k60-gunyah-probe
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      KERNEL_REPO: https://github.com/crdroidandroid/android_kernel_xiaomi_sm8450.git
+      KERNEL_COMMIT: 38c6baf4bb72f783bb3588f9f1240603632a6c83
+      TARGET_RELEASE: 5.10.252-gki-g19f54b03cc87
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc binutils bison ca-certificates ccache curl file flex gpg kmod libelf-dev libssl-dev \
+            make python3 unzip wget xz-utils zip
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/apt.llvm.org.gpg
+          echo 'deb https://apt.llvm.org/noble/ llvm-toolchain-noble-22 main' \
+            | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-22 lld-22 llvm-22
+          sudo mkdir -p /opt/llvm22/bin
+          for f in /usr/lib/llvm-22/bin/*; do
+            sudo ln -sf "$f" "/opt/llvm22/bin/$(basename "$f")"
+          done
+          echo /opt/llvm22/bin >> "$GITHUB_PATH"
+          /opt/llvm22/bin/clang --version
+
+      - name: Fetch exact kernel source
+        run: |
+          set -euxo pipefail
+          mkdir -p .work/kernel
+          git -C .work/kernel init
+          git -C .work/kernel remote add origin "$KERNEL_REPO"
+          git -C .work/kernel fetch --depth 1 origin "$KERNEL_COMMIT"
+          git -C .work/kernel checkout --detach FETCH_HEAD
+          grep -q '^SUBLEVEL = 252$' .work/kernel/Makefile
+          git -C .work/kernel show -s --format='%H %s'
+
+      - name: Build probe module
+        run: |
+          set -euxo pipefail
+          chmod +x scripts/build_module.sh scripts/build_magisk.sh
+          KERNEL_SRC="$PWD/.work/kernel" OUT_DIR="$PWD/out" ./scripts/build_module.sh
+
+      - name: Verify module metadata
+        run: |
+          set -euxo pipefail
+          file out/gunyah_probe.ko
+          modinfo -F vermagic out/gunyah_probe.ko
+          test "$(modinfo -F vermagic out/gunyah_probe.ko)" = \
+            "5.10.252-gki-g19f54b03cc87 SMP preempt mod_unload modversions aarch64"
+          test "$(modinfo -F license out/gunyah_probe.ko)" = "GPL v2"
+          readelf -S out/gunyah_probe.ko | grep -q '__versions'
+          sha256sum out/gunyah_probe.ko
+
+      - name: Build Magisk package
+        run: |
+          set -euxo pipefail
+          ./scripts/build_magisk.sh "$PWD/out/gunyah_probe.ko" \
+            "$PWD/out/k60-gunyah-probe-magisk.zip"
+          unzip -l out/k60-gunyah-probe-magisk.zip
+          sha256sum out/k60-gunyah-probe-magisk.zip
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: k60-gunyah-probe-${{ github.sha }}
+          path: |
+            out/gunyah_probe.ko
+            out/k60-gunyah-probe-magisk.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            out/gunyah_probe.ko \
+            out/k60-gunyah-probe-magisk.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "K60 Gunyah probe $GITHUB_REF_NAME" \
+            --generate-notes

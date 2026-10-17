@@ -1,0 +1,20 @@
+# 本地工具与设备资料，绝不提交
+tools/
+.work/
+.venv/
+venv/
+out/
+*.ko
+*.zip
+*.log
+*.dmesg
+*.img
+*.bin
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+__pycache__/
+*.pyc
