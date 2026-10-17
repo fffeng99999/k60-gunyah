@@ -115,21 +115,24 @@ KERNEL_SRC=/path/to/kernel OUT_DIR=/path/to/out ./scripts/build_kernel.sh
 
 ## 6. 组装 boot.img
 
-使用 AOSP `mkbootimg.py`，保持设备原 ramdisk 和 header 参数：
+使用仓库脚本直接替换 `boot v4` 中的 kernel，并保留当前 `boot_a` 的 ramdisk：
 
 ```bash
-python3 mkbootimg.py \
-  --kernel Image \
-  --ramdisk stock_boot_ramdisk \
-  --header_version 4 \
-  --os_version 16.0.0 \
-  --os_patch_level 2026-04 \
-  --pagesize 4096 \
-  -o boot-custom.img
+python3 scripts/repack_boot_v4.py \
+  --stock-boot /path/to/boot_a.img \
+  --kernel /path/to/Image \
+  --output boot-custom.img
 ```
 
-原始 `boot_a` 的有效镜像长度为 `49770496` 字节，分区其余部分是零填充和 AVB footer。
-先用 `fastboot boot` 临时启动原始 payload，不要先 `fastboot flash`。
+已用原 kernel 做恒等重建测试，输出与原 `boot_a` 的有效 payload 完全一致：
+
+```text
+有效镜像长度: 49770496
+SHA-256:      1f42ee215ee28f3e6cd49a48d56561f994ffcfb20a131cf7e257c713601b74c1
+```
+
+分区其余部分是零填充和 AVB footer。脚本默认输出未签名 payload；当前设备已通过
+fastboot 验证 `unlocked: yes`。先用 `fastboot boot` 临时启动，不要先 `fastboot flash`。
 
 ## 7. 测试与回滚
 
