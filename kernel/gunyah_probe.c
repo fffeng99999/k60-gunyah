@@ -127,8 +127,9 @@ static int __init gunyah_probe_init(void)
 	else
 		pr_info("gh_rm_get_vmid(self): vmid=%u\n", self_vmid);
 
-	if (!ret && self_vmid != GUNYAH_EXPECTED_PRIMARY_VMID)
-		pr_warn("当前 VMID 与已知基线不同（预期 %u）\n",
+	if (primary_vmid != GH_VMID_INVAL &&
+	    primary_vmid != GUNYAH_EXPECTED_PRIMARY_VMID)
+		pr_warn("primary VMID 与已知基线不同（预期 %u）\n",
 			GUNYAH_EXPECTED_PRIMARY_VMID);
 
 	if (primary_vmid != GH_VMID_INVAL) {
