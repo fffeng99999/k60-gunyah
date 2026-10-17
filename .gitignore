@@ -1,2 +1,17 @@
-# 本地构建输出，禁止提交
+# 本地构建输出与 CI 下载产物，禁止提交
 out/
+artifacts/
+artifacts-v2/
+baseline-kernel/
+baseline-kernel-symvers/
+release-v0.1.0/
+scripts/__pycache__/
+
+# 原始启动分区备份与设备固件，禁止提交
+k60-stock-backup/
+tools/device-dump/
+tools/src/
+
+# 内核模块与安装包
+*.ko
+*.zip
