@@ -47,9 +47,11 @@ make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" Image
 install -m 0644 "$KERNEL_SRC/arch/arm64/boot/Image" "$OUT_DIR/Image"
 install -m 0644 "$KERNEL_SRC/System.map" "$OUT_DIR/System.map"
 install -m 0644 "$KERNEL_SRC/.config" "$OUT_DIR/kernel.config"
-if [[ -f "$KERNEL_SRC/Module.symvers" ]]; then
-    install -m 0644 "$KERNEL_SRC/Module.symvers" "$OUT_DIR/Module.symvers"
-fi
+for symvers in vmlinux.symvers Module.symvers; do
+    if [[ -f "$KERNEL_SRC/$symvers" ]]; then
+        install -m 0644 "$KERNEL_SRC/$symvers" "$OUT_DIR/$symvers"
+    fi
+done
 
 echo "已生成 $OUT_DIR/Image"
 file "$OUT_DIR/Image"

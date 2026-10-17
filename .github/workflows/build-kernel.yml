@@ -80,6 +80,7 @@ jobs:
             out/kernel/Image
             out/kernel/System.map
             out/kernel/kernel.config
+            out/kernel/vmlinux.symvers
             out/kernel/Module.symvers
           if-no-files-found: error
           retention-days: 14
