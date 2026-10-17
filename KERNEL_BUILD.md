@@ -208,6 +208,19 @@ gh_rm_get_vm_id_info(vmid=3): ret=-22
 
 随后 `rmmod` 成功，模块文件已清理。
 
+符号版本验证：CI 后续构建（commit `152f81d`）产出 `vmlinux.symvers`，与设备
+391 个模块提取的 `config/Module.symvers` 对比：
+
+```text
+device symbols: 5426
+built symbols:  14596
+overlap:        2738
+mismatches:     0
+```
+
+重叠的 2738 个核心符号 CRC 完全一致，说明内核源码树与设备内核 ABI 匹配，这是
+厂商模块能直接加载的根因。
+
 结论：自编译 5.10.252 内核可正常启动并保持厂商模块与 Gunyah API 兼容；
 `/dev/gunyah` 仍不存在，因为尚未集成 VM manager。
 
