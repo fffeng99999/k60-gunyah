@@ -17,7 +17,32 @@
 
 #include <linux/gunyah/gh_common.h>
 #include <linux/gunyah/gh_rm_drv.h>
-#include <linux/gunyah/hcall_ctrl.h>
+#include <asm/gunyah/hcall.h>
+
+/*
+ * 与 drivers/virt/gunyah/hcall_ctrl.h 中的私有定义保持一致。
+ * 树外模块不能包含私有目录，因此这里只内联所需的 identify hypercall。
+ */
+struct k60_gh_hyp_identify_resp {
+	u64 api_info;
+	u64 flags[3];
+};
+
+static inline int k60_gh_hcall_hyp_identify(
+	struct k60_gh_hyp_identify_resp *resp)
+{
+	struct gh_hcall_resp _resp = { 0 };
+
+	_gh_hcall(0x6000, (struct gh_hcall_args){ 0 }, &_resp);
+	if (resp) {
+		resp->api_info = _resp.resp0;
+		resp->flags[0] = _resp.resp1;
+		resp->flags[1] = _resp.resp2;
+		resp->flags[2] = _resp.resp3;
+	}
+
+	return 0;
+}
 
 #define GUNYAH_EXPECTED_API 1
 #define GUNYAH_EXPECTED_VARIANT 81
@@ -65,7 +90,7 @@ static void log_vminfo(enum gh_vm_names name)
 
 static int __init gunyah_probe_init(void)
 {
-	struct gh_hcall_hyp_identify_resp hyp = { 0 };
+	struct k60_gh_hyp_identify_resp hyp = { 0 };
 	gh_vmid_t primary_vmid = GH_VMID_INVAL;
 	gh_vmid_t self_vmid = GH_VMID_INVAL;
 	u32 api;
@@ -75,7 +100,7 @@ static int __init gunyah_probe_init(void)
 	pr_info("read-only probe loading\n");
 	pr_info("kernel=%s\n", utsname()->release);
 
-	ret = gh_hcall_hyp_identify(&hyp);
+	ret = k60_gh_hcall_hyp_identify(&hyp);
 	if (ret) {
 		pr_err("Gunyah identify hypercall failed: %d\n", ret);
 		return 0;
