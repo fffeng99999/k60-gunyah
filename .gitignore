@@ -1,20 +1,10 @@
-# 本地工具与设备资料，绝不提交
-tools/
-.work/
-.venv/
-venv/
-out/
-*.ko
-*.zip
-*.log
-*.dmesg
-*.img
-*.bin
-
-# 系统与编辑器
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-__pycache__/
-*.pyc
+# 备份与原始内核镜像，禁止提交到公开仓库
+k60-stock-backup/
+tools/device-dump/
+tools/src/
+artifacts/
+artifacts-v2/
+baseline-kernel/
+baseline-kernel-symvers/
+release-v0.1.0/
+scripts/__pycache__/
