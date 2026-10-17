@@ -56,6 +56,8 @@ jobs:
           git -C .work/kernel checkout --detach FETCH_HEAD
           grep -q '^SUBLEVEL = 252$' .work/kernel/Makefile
           git -C .work/kernel show -s --format='%H %s'
+          # 防止 setlocalversion 因构建树有未提交改动而追加 "+"。
+          rm -rf .work/kernel/.git
 
       - name: Build probe module
         run: |
