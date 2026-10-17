@@ -189,6 +189,11 @@ scripts/build_module.sh       模块构建脚本
 scripts/build_magisk.sh       Magisk zip 打包脚本
 ```
 
+## 完整内核构建
+
+设备真实布局、原始启动分区备份、boot v4 参数和完整 `Image` 构建流程见
+[KERNEL_BUILD.md](KERNEL_BUILD.md)。
+
 ## 第二阶段可行性
 
 `/dev/gunyah` VM manager 的可行性边界、crosvm UAPI 需求、现有厂商 API 缺口和可接受路线，
