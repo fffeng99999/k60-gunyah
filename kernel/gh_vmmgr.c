@@ -33,6 +33,7 @@
 #include <linux/types.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
+#include <linux/moduleparam.h>
 
 #include <linux/gunyah/gh_common.h>
 #include <linux/gunyah/gh_rm_drv.h>
@@ -46,6 +47,16 @@ static struct class *gh_vmmgr_class;
 static DEFINE_MUTEX(gh_vmmgr_lock);
 static unsigned int gh_vmmgr_vmid;
 static bool gh_vmmgr_registered;
+
+/*
+ * probe_rm=1 makes the module perform the RM queries at insmod time and
+ * print the result, so behaviour can be observed without a userspace
+ * helper. Default 0: load only creates the device node.
+ */
+static bool probe_rm;
+module_param(probe_rm, bool, 0400);
+MODULE_PARM_DESC(probe_rm,
+	"Run read-only RM queries at insmod and print result (default N)");
 
 /*
  * The vendor gh_vm_names enum is fixed and has no entry for a user
@@ -211,6 +222,21 @@ static int __init gh_vmmgr_init(void)
 	pr_info("Gunyah VM manager (additive) loaded\n");
 	pr_info("device /dev/%s created; autoload is off by default\n",
 		GH_VMMGR_DEVICE_NAME);
+
+	if (probe_rm) {
+		struct gh_vmmgr_vminfo probe;
+
+		mutex_lock(&gh_vmmgr_lock);
+		ret = gh_vmmgr_query_vminfo(&probe);
+		mutex_unlock(&gh_vmmgr_lock);
+		if (ret) {
+			pr_warn("probe_rm: query failed: %d\n", ret);
+		} else {
+			pr_info("probe_rm: primary_vmid=%u uri=%u name=%u\n",
+				probe.primary_vmid, probe.has_uri, probe.has_name);
+		}
+	}
+
 	return 0;
 
 err_del_cdev:
