@@ -189,6 +189,13 @@ scripts/build_module.sh       模块构建脚本
 scripts/build_magisk.sh       Magisk zip 打包脚本
 ```
 
+## 第二阶段可行性
+
+`/dev/gunyah` VM manager 的可行性边界、crosvm UAPI 需求、现有厂商 API 缺口和可接受路线，
+见 [PHASE2_ANALYSIS.md](PHASE2_ANALYSIS.md)。
+
+当前结论：在不修改内核/boot 的约束下，仅靠可加载模块无法安全补齐完整 VM manager。
+
 ## 下一阶段
 
 1. 已完成：`gunyah_probe.ko` 加载、日志和 `rmmod` 均验证通过。
