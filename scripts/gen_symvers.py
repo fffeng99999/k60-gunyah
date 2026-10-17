@@ -153,7 +153,7 @@ def main() -> int:
             crc = versions[name]
             module_name = "vmlinux"
             export_type = "EXPORT_SYMBOL"
-        lines.append(f"0x{crc:08x}\t{name}\t{module_name}\t{export_type}")
+        lines.append(f"0x{crc:08x}\t{name}\t{module_name}\t{export_type}\t")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(("\n".join(lines) + "\n").encode("ascii"))
