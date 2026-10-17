@@ -134,6 +134,25 @@ SHA-256:      1f42ee215ee28f3e6cd49a48d56561f994ffcfb20a131cf7e257c713601b74c1
 分区其余部分是零填充和 AVB footer。脚本默认输出未签名 payload；当前设备已通过
 fastboot 验证 `unlocked: yes`。先用 `fastboot boot` 临时启动，不要先 `fastboot flash`。
 
+### 6.1 临时启动验证
+
+已使用原 kernel 重建的恒等 payload 执行：
+
+```text
+fastboot boot repacked_v4_identity.img
+```
+
+设备正常启动，结果：
+
+```text
+sys.boot_completed=1
+uname -r = 5.10.252-gki-g19f54b03cc87
+SELinux = Enforcing
+```
+
+该操作只从 RAM 临时启动，没有写入 `boot` 分区。说明当前解锁设备接受这种未签名
+boot v4 payload，可以用于后续自定义内核的首轮测试。
+
 ## 7. 测试与回滚
 
 测试顺序：
