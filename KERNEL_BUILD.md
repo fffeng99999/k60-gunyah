@@ -98,6 +98,10 @@ release: 5.10.252-gki-g19f54b03cc87
 config: 设备 /proc/config.gz 备份
 ```
 
+CI runner 内存约束：设备原配置为 Full LTO，但 GitHub 标准 16 GB runner 在最终
+`vmlinux.o` 链接阶段会被 OOM kill。工作流因此使用 Android 同样支持的 Thin LTO；
+boot v4 参数、ramdisk、源码和 vermagic 均不变。符号 CRC 会在产物中另行对比。
+
 构建产物：
 
 ```text

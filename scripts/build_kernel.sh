@@ -26,7 +26,9 @@ gzip -dc "$ROOT/config/config.gz" > "$KERNEL_SRC/.config"
     --enable MODULES \
     --enable MODVERSIONS \
     --disable MODULE_SIG \
-    --enable MODULE_SCMVERSION
+    --enable MODULE_SCMVERSION \
+    --disable LTO_CLANG_FULL \
+    --enable LTO_CLANG_THIN
 
 printf '%s\n' 'g19f54b03cc87' > "$KERNEL_SRC/.scmversion"
 export LOCALVERSION=
