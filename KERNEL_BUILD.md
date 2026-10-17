@@ -157,6 +157,60 @@ SELinux = Enforcing
 该操作只从 RAM 临时启动，没有写入 `boot` 分区。说明当前解锁设备接受这种未签名
 boot v4 payload，可以用于后续自定义内核的首轮测试。
 
+## 6.2 自定义内核启动验证
+
+2026-10-18 已完成。GitHub Actions 构建 commit `152f81d` 之前的 `a2c0bc5`
+（Thin LTO），产出：
+
+```text
+Image        38296668 bytes  sha256=a1357112ba9b49622138b39a195e3e5dea63b12d4d9c7fddfa278565aedc644
+System.map   10331090 bytes  sha256=851530e310f631a3b87de14276d242ce52138c6b75f555d4e0f20b5194493fde
+kernel.config   211115 bytes
+```
+
+用 `scripts/repack_boot_v4.py` 替换 K60 `boot_a` 原始 ramdisk 后得到：
+
+```text
+boot_custom_baseline.img  41189376 bytes  sha256=200e3df2893d09b7c8043daf7eb9f231a47aa91aa3f133c7960cc3e0a8bd3425
+```
+
+`fastboot boot` 临时启动，设备验证结果：
+
+```text
+sys.boot_completed=1
+uname -r=5.10.252-gki-g19f54b03cc87
+SELinux=Enforcing
+verifiedbootstate=green
+slot=_a
+modules_disabled=0
+/proc/modules=386 个模块
+```
+
+厂商 Gunyah 模块在新内核上全部加载：
+
+```text
+gh_rm_drv          65536  11 (含 msm_drm, qrtr_gunyah, gh_virtio_backend 等)
+gh_msgq            24576   3 (msm_drm, mem_buf, gh_rm_drv)
+gh_dbl             24576   2 (qrtr_gunyah, gh_rm_drv)
+gh_ctrl            16384   0
+gh_arm_drv         16384   1 (gh_rm_drv)
+gh_virtio_backend  45056   0
+```
+
+符号兼容性交叉验证：为原内核编译的 `gunyah_probe.ko`（v0.1.0 Release 产物）在
+新内核上直接 `insmod` 成功，读取结果与原内核一致：
+
+```text
+hypervisor identify: api=1 variant=81
+gh_rm_get_vmid(primary): vmid=3
+gh_rm_get_vm_id_info(vmid=3): ret=-22
+```
+
+随后 `rmmod` 成功，模块文件已清理。
+
+结论：自编译 5.10.252 内核可正常启动并保持厂商模块与 Gunyah API 兼容；
+`/dev/gunyah` 仍不存在，因为尚未集成 VM manager。
+
 ## 7. 测试与回滚
 
 测试顺序：
