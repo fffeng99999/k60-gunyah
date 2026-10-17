@@ -37,6 +37,20 @@
 
 更多说明见 [SECURITY.md](SECURITY.md)。
 
+## 当前验证结果（2026-10-18）
+
+- GitHub Actions 已成功构建 commit `7c3ed49`，CI 校验了目标 vermagic、GPL license、`__versions` 段和 Magisk zip。
+- 有线 ADB 手动 `insmod` 成功，读到的结果为：
+  - hypervisor identify：`api=1 variant=81`
+  - `gh_rm_get_vmid(primary)=3`
+  - `gh_rm_get_vmid(self)=0`（self 是 VMID 0 的别名）
+  - `gh_rm_get_vminfo()` 返回 `0`，但 primary/self 的 guid、uri、name、sign_auth 均为空
+  - `gh_rm_get_vm_id_info(3)` 返回 `-EINVAL (-22)`
+- `rmmod gunyah_probe` 成功，模块无残留；SELinux 保持 `Enforcing`。
+- Magisk zip 已通过 `magisk --install-module` 安装验证，Action 开关和 `service.sh` 受控加载路径均通过；发布默认保持自动加载关闭。
+
+`gh_rm_get_vm_id_info(3) = -EINVAL` 说明当前 RM 对 primary VM 的标识查询并未成功返回；后续 VM manager 不能假设该查询可用，需要继续确认 RM 策略和可用 RPC。
+
 ## 构建
 
 构建固定使用：
@@ -177,7 +191,7 @@ scripts/build_magisk.sh       Magisk zip 打包脚本
 
 ## 下一阶段
 
-1. 在设备上手动验证 `gunyah_probe.ko` 加载、日志和 `rmmod`。
+1. 已完成：`gunyah_probe.ko` 加载、日志和 `rmmod` 均验证通过。
 2. 根据 RM 查询结果确认非 trusted VM 策略。
 3. 回移最小 VM manager、vCPU 和内存接口。
 4. 出现 `/dev/gunyah` 后，验证 crosvm/DroidVM UAPI 兼容性。
