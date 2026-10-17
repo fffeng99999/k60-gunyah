@@ -205,6 +205,7 @@ static const struct file_operations gh_vmmgr_fops = {
 
 static int __init gh_vmmgr_init(void)
 {
+	struct device *dev;
 	int ret;
 
 	ret = alloc_chrdev_region(&gh_vmmgr_dev, 0, 1, GH_VMMGR_DEVICE_NAME);
