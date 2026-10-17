@@ -43,6 +43,9 @@ gzip -dc "$ROOT/config/config.gz" > "$KERNEL_SRC/.config"
 
 printf '%s\n' 'g19f54b03cc87' > "$KERNEL_SRC/.scmversion"
 
+# setlocalversion 在 LOCALVERSION 未设置时会追加 "+"；显式导出空值。
+export LOCALVERSION=
+
 make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" olddefconfig
 RELEASE="$(make -s -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" kernelrelease)"
 if [[ "$RELEASE" != "$TARGET_RELEASE" ]]; then
