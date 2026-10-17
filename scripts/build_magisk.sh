@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KO="${1:-$ROOT/out/gunyah_probe.ko}"
+KO2="${KO2:-$ROOT/out/gh_vmmgr.ko}"
 OUT_ZIP="${2:-$ROOT/out/k60-gunyah-probe-magisk.zip}"
 STAGE="$ROOT/out/magisk-stage"
 
@@ -19,6 +20,7 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp -a "$ROOT/magisk/." "$STAGE/"
 install -m 0644 "$KO" "$STAGE/gunyah_probe.ko"
+install -m 0644 "$KO2" "$STAGE/gh_vmmgr.ko"
 
 (
     cd "$STAGE"

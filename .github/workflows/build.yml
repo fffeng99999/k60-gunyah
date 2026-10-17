@@ -75,6 +75,12 @@ jobs:
           test "$(modinfo -F license out/gunyah_probe.ko)" = "GPL v2"
           readelf -S out/gunyah_probe.ko | grep -q '__versions'
           sha256sum out/gunyah_probe.ko
+          modinfo -F vermagic out/gh_vmmgr.ko
+          test "$(modinfo -F vermagic out/gh_vmmgr.ko)" = \
+            "5.10.252-gki-g19f54b03cc87 SMP preempt mod_unload modversions aarch64"
+          test "$(modinfo -F license out/gh_vmmgr.ko)" = "GPL v2"
+          readelf -S out/gh_vmmgr.ko | grep -q '__versions'
+          sha256sum out/gh_vmmgr.ko
 
       - name: Build Magisk package
         run: |
@@ -90,6 +96,7 @@ jobs:
           name: k60-gunyah-probe-${{ github.sha }}
           path: |
             out/gunyah_probe.ko
+            out/gh_vmmgr.ko
             out/k60-gunyah-probe-magisk.zip
           if-no-files-found: error
           retention-days: 30

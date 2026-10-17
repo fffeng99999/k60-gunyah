@@ -57,15 +57,18 @@ make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" modules_prepare
 install -m 0644 "$ROOT/config/Module.symvers" "$KERNEL_SRC/Module.symvers"
 make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" M="$ROOT/kernel" modules
 
-install -m 0644 "$ROOT/kernel/gunyah_probe.ko" "$OUT_DIR/gunyah_probe.ko"
+for module in gunyah_probe gh_vmmgr; do
+    install -m 0644 "$ROOT/kernel/$module.ko" "$OUT_DIR/$module.ko"
+done
 
-MODULE_VERMAGIC="$(modinfo -F vermagic "$OUT_DIR/gunyah_probe.ko" 2>/dev/null || true)"
-if [[ -n "$MODULE_VERMAGIC" && "$MODULE_VERMAGIC" != "$TARGET_VERMAGIC" ]]; then
-    echo "错误：产物 vermagic 不匹配：$MODULE_VERMAGIC" >&2
-    exit 1
-fi
-
-echo "已生成 $OUT_DIR/gunyah_probe.ko"
-if [[ -n "$MODULE_VERMAGIC" ]]; then
-    echo "vermagic: $MODULE_VERMAGIC"
-fi
+for module in gunyah_probe gh_vmmgr; do
+    MODULE_VERMAGIC="$(modinfo -F vermagic "$OUT_DIR/$module.ko" 2>/dev/null || true)"
+    if [[ -n "$MODULE_VERMAGIC" && "$MODULE_VERMAGIC" != "$TARGET_VERMAGIC" ]]; then
+        echo "错误：$module vermagic 不匹配：$MODULE_VERMAGIC" >&2
+        exit 1
+    fi
+    echo "已生成 $OUT_DIR/$module.ko"
+    if [[ -n "$MODULE_VERMAGIC" ]]; then
+        echo "vermagic: $MODULE_VERMAGIC"
+    fi
+done

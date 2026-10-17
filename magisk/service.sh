@@ -37,6 +37,13 @@ for dep in gh_rm_drv gh_arm_drv gh_msgq gh_dbl; do
     fi
 done
 
+if insmod "$MODDIR/gh_vmmgr.ko"; then
+    log_msg "gh_vmmgr loaded"
+else
+    log_msg "gh_vmmgr insmod failed (exit $?)"
+    exit 0
+fi
+
 failures="$(cat "$STATE/fail_count" 2>/dev/null || printf '0')"
 case "$failures" in
     ''|*[!0-9]*) failures=0 ;;

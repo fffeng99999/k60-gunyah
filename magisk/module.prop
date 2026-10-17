@@ -3,4 +3,4 @@ name=K60 Gunyah Read-Only Probe
 version=0.1.0
 versionCode=1
 author=k60-gunyah contributors
-description=Gunyah 只读探测模块；默认不自动加载，具备启动失败自动禁用逻辑。
+description=Gunyah 只读探测与 VM manager 模块；默认不自动加载，具备启动失败自动禁用逻辑。
