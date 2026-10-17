@@ -177,7 +177,7 @@ static const struct file_operations gh_vmmgr_fops = {
 	.release = gh_vmmgr_release,
 	.unlocked_ioctl = gh_vmmgr_ioctl,
 	.compat_ioctl = gh_vmmgr_ioctl,
-	.llseek = noop_llseek,
+	.llseek = no_llseek,
 };
 
 static int __init gh_vmmgr_init(void)
