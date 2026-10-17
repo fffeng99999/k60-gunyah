@@ -1,3 +1,3 @@
 # SPDX-License-Identifier: GPL-2.0-only
 obj-m += gunyah_probe.o
-obj-m += vmmgr/gh_vmmgr.o
+obj-m += vmmgr/
