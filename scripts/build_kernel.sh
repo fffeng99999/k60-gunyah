@@ -71,6 +71,20 @@ make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" Image
 # of building Image.
 make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" modules_prepare
 
+# Use the DEVICE's Module.symvers as the symbol source for the module build,
+# the same thing scripts/build_module.sh does.
+#
+# Why: gh_rm_drv.ko imports gh_get_irq/gh_put_irq/gh_get_virq/gh_put_virq
+# from gh_arm_drv.ko, which lives in arch/arm64/gunyah and is not part of
+# this M= build. Without a symvers that already knows those symbols,
+# modpost would emit them with CRC 0 and every load would fail MODVERSIONS
+# with "disagrees about version of symbol".
+#
+# config/Module.symvers was extracted from the running device and its CRCs
+# were cross-checked against a kernel built from this exact source: 2738
+# overlapping symbols, 0 mismatches. See CURRENT_RESULTS.md section 5.
+install -m 0644 "$ROOT/config/Module.symvers" "$KERNEL_SRC/Module.symvers"
+
 # Then build ONLY drivers/virt/gunyah, not the whole module tree.
 #
 # A full "make modules" fails in this vendor tree for reasons unrelated to
@@ -79,12 +93,25 @@ make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" modules_prepare
 # #include "./trace.h", which resolves relative to include/trace/ and does
 # not exist. Those modules are not ours and we do not ship them.
 #
-# Everything the VM manager needs lives in drivers/virt/gunyah: gh_rm_drv
-# (which now also contains gh_rm_vmmgr.o), gh_msgq, gh_dbl, gh_arm_drv and
-# gh_vm_mgr itself. Building that one directory with M= sidesteps the broken
-# trace headers entirely and is also far faster.
+# Everything we need to build lives in drivers/virt/gunyah: gh_rm_drv (now
+# also containing gh_rm_vmmgr.o), gh_msgq, gh_dbl and gh_vm_mgr itself.
+# gh_arm_drv lives in arch/arm64/gunyah; it is not rebuilt and is resolved
+# through the device Module.symvers installed above.
 make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" \
     M=drivers/virt/gunyah modules
+
+# Hard gate: our rebuilt modules replace ones the device already ships.
+# msm_drm, qrtr_gunyah and gh_virtio_backend import symbols from gh_rm_drv,
+# so a changed CRC would make them refuse to load and the device would come
+# up without a display. Compare before anything is packaged.
+GV_SYMVERS="$KERNEL_SRC/drivers/virt/gunyah/Module.symvers"
+if [[ -f "$GV_SYMVERS" ]]; then
+    python3 "$ROOT/scripts/compare_module_crcs.py" \
+        "$ROOT/config/Module.symvers" "$GV_SYMVERS"
+else
+    echo "错误：M= 构建没有生成 $GV_SYMVERS" >&2
+    exit 1
+fi
 
 install -m 0644 "$KERNEL_SRC/arch/arm64/boot/Image" "$OUT_DIR/Image"
 install -m 0644 "$KERNEL_SRC/System.map" "$OUT_DIR/System.map"
