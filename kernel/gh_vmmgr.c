@@ -59,6 +59,15 @@ MODULE_PARM_DESC(probe_rm,
 	"Run read-only RM queries at insmod and print result (default N)");
 
 /*
+ * alloc_vmid=1 asks RM for a VMID at insmod and prints the result. This is
+ * the decisive test for whether non-trusted VMs are permitted. Default 0.
+ */
+static bool alloc_vmid;
+module_param(alloc_vmid, bool, 0400);
+MODULE_PARM_DESC(alloc_vmid,
+	"Request a VMID from RM at insmod and print result (default N)");
+
+/*
  * The vendor gh_vm_names enum is fixed and has no entry for a user
  * supplied VM, so gh_rm_vm_alloc_vmid() cannot allocate arbitrary VMs.
  * We still drive the exported API so the RM error code is visible in
@@ -248,6 +257,21 @@ static int __init gh_vmmgr_init(void)
 		mutex_unlock(&gh_vmmgr_lock);
 		pr_info("probe_rm: ret=%d primary_vmid=%u has_uri=%u has_name=%u\n",
 			ret, probe.primary_vmid, probe.has_uri, probe.has_name);
+	}
+
+	if (alloc_vmid) {
+		mutex_lock(&gh_vmmgr_lock);
+		if (gh_vmmgr_registered) {
+			pr_warn("alloc_vmid: vmid %u already held\n",
+				gh_vmmgr_vmid);
+			ret = -EEXIST;
+		} else {
+			ret = gh_vmmgr_request_vmid();
+			if (!ret)
+				gh_vmmgr_registered = true;
+		}
+		mutex_unlock(&gh_vmmgr_lock);
+		pr_info("alloc_vmid: ret=%d vmid=%u\n", ret, gh_vmmgr_vmid);
 	}
 
 	return 0;
