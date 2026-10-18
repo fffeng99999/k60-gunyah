@@ -37,6 +37,8 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang-22 lld-22 llvm-22
+          # Needed by scripts/precompile_check.ps1
+          sudo apt-get install -y --no-install-recommends powershell
           sudo mkdir -p /opt/llvm22/bin
           for f in /usr/lib/llvm-22/bin/*; do
             sudo ln -sf "$f" "/opt/llvm22/bin/$(basename "$f")"
@@ -56,6 +58,13 @@ jobs:
           git -C .work/kernel show -s --format='%H %s'
           # Prevent setlocalversion from appending "+" for a dirty tree.
           rm -rf .work/kernel/.git
+
+      # Cheap gate first: a full kernel build is ~25 minutes, so run the
+      # static check and fail in seconds instead.
+      - name: Pre-compile static check
+        run: |
+          set -euxo pipefail
+          pwsh -NoProfile -File scripts/precompile_check.ps1
 
       - name: Apply in-tree VM manager
         run: |

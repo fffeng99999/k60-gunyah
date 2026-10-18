@@ -401,4 +401,3 @@ int gh_rm_set_vm_boot_context(u16 vmid, u32 reg, u64 value)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(gh_rm_set_vm_boot_context);
- */
