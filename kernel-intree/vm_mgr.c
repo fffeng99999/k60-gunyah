@@ -412,6 +412,16 @@ int gh_vm_mem_alloc(struct gh_vm *ghvm,
 
 	list_add(&mapping->list, &ghvm->memory_mappings);
 	mutex_unlock(&ghvm->mm_lock);
+
+	/*
+	 * If the VM is already up, GH_VM_START has come and gone, so a region
+	 * registered now would otherwise never reach RM. Hand it over
+	 * immediately; crosvm adds regions at runtime for hotplug.
+	 */
+	if (ghvm->vm_status == GH_RM_VM_STATUS_RUNNING ||
+	    ghvm->vm_status == GH_RM_VM_STATUS_READY)
+		return gh_vm_mem_parcel_out(ghvm, mapping);
+
 	return 0;
 
 free_acl:
@@ -1335,6 +1345,28 @@ static long gh_vm_ioctl(struct file *filp, unsigned int cmd,
 		r = 0;
 		break;
 	}
+	/*
+	 * Recognised but not implemented. Returning -ENOTTY for these would
+	 * look like "this kernel does not speak the UABI at all"; -EOPNOTSUPP
+	 * plus a log line says the ioctl is known and the feature is missing.
+	 *
+	 * MAP_CMA_MEM needs memfd/dma-buf import into a guest parcel,
+	 * SET_AUTH_TYPE only matters for QTVM/protected guests, and
+	 * SHARE_BLOB is the runtime virtio-gpu path. None of them are on the
+	 * minimum boot path.
+	 */
+	case GH_VM_ANDROID_MAP_CMA_MEM:
+		pr_warn_once("GH_VM_ANDROID_MAP_CMA_MEM not implemented\n");
+		r = -EOPNOTSUPP;
+		break;
+	case GH_VM_ANDROID_SET_AUTH_TYPE:
+		pr_warn_once("GH_VM_ANDROID_SET_AUTH_TYPE not implemented\n");
+		r = -EOPNOTSUPP;
+		break;
+	case GH_VM_ANDROID_SHARE_BLOB:
+		pr_warn_once("GH_VM_ANDROID_SHARE_BLOB not implemented\n");
+		r = -EOPNOTSUPP;
+		break;
 	default:
 		r = -ENOTTY;
 		break;
