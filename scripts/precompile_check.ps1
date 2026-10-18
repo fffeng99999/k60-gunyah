@@ -21,8 +21,18 @@ $VendorDir = Join-Path (Split-Path -Parent $Root) "tools\src\crdroid"
 
 $ourHdr  = Get-ChildItem "$SrcDir\*.h"
 $ourSrc  = Get-ChildItem "$SrcDir\*.c"
-$venHdr  = Get-ChildItem "$VendorDir\include\*.h"
-$venPriv = Join-Path $VendorDir "gh_rm_drv_private.h"
+$venHdr  = @()
+if (Test-Path "$VendorDir\include") {
+    $venHdr = Get-ChildItem "$VendorDir\include\*.h"
+} else {
+    Write-Output "   note: $VendorDir\include absent (gitignored); vendor-symbol checks reduced"
+}
+
+$venPriv  = Join-Path $VendorDir "gh_rm_drv_private.h"
+$venSrc   = @()
+if (Test-Path $VendorDir) {
+    $venSrc = Get-ChildItem "$VendorDir\*.c"
+}
 
 # uabi_offsets.c is a host-side reference checker compiled against the C
 # library, not by the kernel, so it is excluded from kernel-symbol checks.
@@ -41,7 +51,7 @@ function Register-Symbols([string]$text, [string]$origin) {
 }
 foreach ($h in $ourHdr)  { Register-Symbols (Get-Content $h.FullName -Raw) ("our:" + $h.Name) }
 foreach ($h in $venHdr)  { Register-Symbols (Get-Content $h.FullName -Raw) ("vendor:" + $h.Name) }
-Register-Symbols (Get-Content $venPriv -Raw) "vendor:gh_rm_drv_private.h"
+if (Test-Path $venPriv) { Register-Symbols (Get-Content $venPriv -Raw) "vendor:gh_rm_drv_private.h" }
 
 $defined = @{}
 foreach ($f in $kernSrc) {
@@ -592,18 +602,25 @@ foreach ($f in @($kernSrc) + @($ourHdr)) {
     $cb = ([regex]::Matches($t, "\}")).Count
     $op = ([regex]::Matches($t, "\(")).Count
     $cp = ([regex]::Matches($t, "\)")).Count
-    $oc = ([regex]::Matches($t, "/\*")).Count
-    $cc = ([regex]::Matches($t, "\*/")).Count
+    $noComments = [regex]::Replace($t, "(?s)/\*.*?\*/", "")
+    $oc = ([regex]::Matches($noComments, "/\*")).Count
+    $cc = ([regex]::Matches($noComments, "\*/")).Count
     if ($ob -ne $cb) { Add-Finding $f.Name "brace imbalance $ob open / $cb close" }
     if ($op -ne $cp) { Add-Finding $f.Name "paren imbalance $op open / $cp close" }
     if ($oc -ne $cc) { Add-Finding $f.Name "comment imbalance $oc open / $cc close" }
 }
 
 # ------------------------------------------- 5. duplicate exports
+# The vendor .c files are gitignored, so this check is skipped in CI. It
+# still runs locally, which is where a symbol clash would be introduced.
 $vendorExports = @{}
-Get-ChildItem "$VendorDir\*.c" | ForEach-Object {
-    [regex]::Matches((Get-Content $_.FullName -Raw), "EXPORT_SYMBOL(?:_GPL)?\s*\(\s*(\w+)\s*\)") |
-        ForEach-Object { $vendorExports[$_.Groups[1].Value] = $_.Name }
+if (Test-Path $VendorDir) {
+    Get-ChildItem "$VendorDir\*.c" | ForEach-Object {
+        [regex]::Matches((Get-Content $_.FullName -Raw), "EXPORT_SYMBOL(?:_GPL)?\s*\(\s*(\w+)\s*\)") |
+            ForEach-Object { $vendorExports[$_.Groups[1].Value] = $_.Name }
+    }
+} else {
+    Write-Output "   note: vendor sources absent; duplicate-export check skipped"
 }
 foreach ($f in $kernSrc) {
     [regex]::Matches((Get-Content $f.FullName -Raw), "EXPORT_SYMBOL(?:_GPL)?\s*\(\s*(\w+)\s*\)") | ForEach-Object {
