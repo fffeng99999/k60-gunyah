@@ -70,6 +70,17 @@ jobs:
           set -euxo pipefail
           pwsh -NoProfile -File scripts/precompile_check.ps1 -KernelSrc "$PWD/.work/kernel"
 
+      # The kernel Image takes ~20 minutes from cold. ccache cuts repeat
+      # runs to a couple of minutes, which matters because every VM manager
+      # change needs a fresh Image to test on the device.
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ env.KERNEL_COMMIT }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ env.KERNEL_COMMIT }}-
+
       - name: Apply in-tree VM manager
         run: |
           set -euxo pipefail

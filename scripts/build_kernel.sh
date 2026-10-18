@@ -9,6 +9,19 @@ TARGET_RELEASE="5.10.252-gki-g19f54b03cc87"
 JOBS="${JOBS:-$(nproc)}"
 MAKE_ARGS=(ARCH=arm64 LLVM=1 LLVM_IAS=1)
 
+# ccache cuts repeat build time from ~20 minutes to a couple of minutes,
+# which matters because each iteration on the VM manager needs a fresh
+# kernel Image. CI restores the cache; a local run just benefits if ccache
+# happens to be installed.
+if command -v ccache >/dev/null 2>&1; then
+    export CCACHE_DIR="${CCACHE_DIR:-$HOME/.ccache}"
+    export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-5G}"
+    export CCACHE_COMPRESS=1
+    MAKE_ARGS+=(CC="ccache clang" HOSTCC="ccache gcc")
+    echo "ccache enabled (dir=$CCACHE_DIR max=$CCACHE_MAXSIZE)"
+    ccache --show-stats | head -5 || true
+fi
+
 if [[ ! -f "$KERNEL_SRC/Makefile" ]]; then
     echo "错误：KERNEL_SRC 不是内核源码树：$KERNEL_SRC" >&2
     exit 2
@@ -64,12 +77,16 @@ fi
 
 # Build the kernel Image first. This is the step that has been proven to
 # work; it does not compile any modules.
+echo "=== $(date -u +%H:%M:%S) building Image ==="
 make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" Image
+echo "=== $(date -u +%H:%M:%S) Image done ==="
 
 # modules_prepare is cheap and guarantees the module build scaffolding is
 # in place even if a future kernel version stops doing it as a side effect
 # of building Image.
+echo "=== $(date -u +%H:%M:%S) modules_prepare ==="
 make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" modules_prepare
+echo "=== $(date -u +%H:%M:%S) modules_prepare done ==="
 
 # Use the DEVICE's Module.symvers as the symbol source for the module build,
 # the same thing scripts/build_module.sh does.
@@ -97,8 +114,10 @@ install -m 0644 "$ROOT/config/Module.symvers" "$KERNEL_SRC/Module.symvers"
 # also containing gh_rm_vmmgr.o), gh_msgq, gh_dbl and gh_vm_mgr itself.
 # gh_arm_drv lives in arch/arm64/gunyah; it is not rebuilt and is resolved
 # through the device Module.symvers installed above.
+echo "=== $(date -u +%H:%M:%S) building gunyah modules ==="
 make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" \
     M=drivers/virt/gunyah modules
+echo "=== $(date -u +%H:%M:%S) gunyah modules done ==="
 
 # Hard gate: our rebuilt modules replace ones the device already ships.
 # msm_drm, qrtr_gunyah and gh_virtio_backend import symbols from gh_rm_drv,
