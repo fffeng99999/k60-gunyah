@@ -75,14 +75,45 @@ python scripts\repack_boot_v4.py --stock-boot boot_a.img `
 .\tools\platform-tools-full\platform-tools\fastboot.exe boot boot_vmmgr.img
 ```
 
-### 4.2 验证清单
+### 4.2 模块部署（新增，必读）
+
+`gh_rm_drv.ko` 现在由我们构建（厂商 object + `gh_rm_vmmgr.o`），
+**不再用厂商那份**。`gh_vm_mgr.ko` 依赖它导出的
+`gh_rm_set_vm_boot_context`。
+
+部署方式二选一：
+
+**A. 覆盖 vendor_dlkm（彻底）**
+
+```powershell
+adb root; adb remount
+adb push gh_rm_drv.ko /vendor_dlkm/lib/modules/gh_rm_drv.ko
+adb push gh_vm_mgr.ko  /vendor_dlkm/lib/modules/gh_vm_mgr.ko
+adb reboot
+```
+
+**B. Magisk 模块后装（可回滚）**
+
+在 `service.sh` 里，等厂商模块加载完后：
+
+```sh
+insmod /data/adb/modules/xxx/gh_rm_drv.ko   # 需先 rmmod 厂商版，风险高
+insmod /data/adb/modules/xxx/gh_vm_mgr.ko
+```
+
+B 需要先 `rmmod gh_rm_drv`，而 DRM 等依赖它，实际不可行。
+**先试 A。**
+
+### 4.3 验证清单
 
 ```text
 [ ] sys.boot_completed=1
 [ ] SELinux=Enforcing
-[ ] /dev/gunyah 存在
-[ ] /proc/modules 厂商模块全部在
+[ ] uname -r = 5.10.252-gki-g19f54b03cc87
+[ ] lsmod 里 gh_rm_drv 存在且被 DRM/qrtr/virtio 依赖（holders 非空）
+[ ] lsmod 里 gh_vm_mgr 存在
 [ ] dmesg 出现 "gh_vm_mgr: Gunyah VM manager loaded"
+[ ] /dev/gunyah 存在
 [ ] GH_CREATE_VM 返回 fd
 [ ] GH_VM_SET_USER_MEM_REGION 成功
 [ ] GH_VM_START 的每一步 RM 消息都有明确结果

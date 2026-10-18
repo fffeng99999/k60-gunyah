@@ -1430,6 +1430,20 @@ static int __init gh_vm_mgr_init(void)
 		goto err_irqfd;
 
 	ret = misc_register(&gh_dev);
+	if (ret == -EEXIST) {
+		/*
+		 * The vendor gh_vm_loader_core.c also registers a miscdevice
+		 * literally named "gunyah" for the secure-VM loader UABI
+		 * (GH_VM_IOCTL_TYPE is lowercase "g", ours is uppercase "G").
+		 * The device config has CONFIG_GH_VM_LOADER unset so that driver
+		 * is not built and this cannot happen today, but if a future
+		 * config enables it the two collide here and the VM manager
+		 * loses. Fail loudly rather than silently having no /dev/gunyah.
+		 */
+		pr_err("/dev/gunyah already registered by another driver; "
+		       "check CONFIG_GH_VM_LOADER\n");
+		goto err_ioeventfd;
+	}
 	if (ret) {
 		pr_err("misc_register failed: %d\n", ret);
 		goto err_ioeventfd;
