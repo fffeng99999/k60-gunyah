@@ -85,7 +85,7 @@ static bool gh_handle_mmio(struct gh_vcpu *vcpu,
 	if (WARN_ON(len > sizeof(u64)))
 		len = sizeof(u64);
 
-	if (vcpu_run_resp->state == GH_VCPU_STATE_MMIO_READ) {
+	if (vcpu_run_resp->state == GH_VCPU_ADDRSPACE_VMMIO_READ) {
 		vcpu->vcpu_run->mmio.is_write = 0;
 		/* Remember to feed the value back on the next run. */
 		vcpu->state = GH_VCPU_MMIO_READ;

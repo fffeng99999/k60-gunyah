@@ -80,12 +80,16 @@ jobs:
           test -s out/kernel/Image
           test -s out/kernel/System.map
           test -s out/kernel/kernel.config
-          # The VM manager must be enabled, not silently dropped.
-          grep -E '^CONFIG_GH_VM_MGR=' out/kernel/kernel.config
+
+          # GH_VM_MGR must be built in, not =m. As a module it would force
+          # gh_rm_drv to be rebuilt and replace the vendor module that DRM,
+          # qrtr and the virtio backends load.
+          grep -E '^CONFIG_GH_VM_MGR=y$' out/kernel/kernel.config
+
           # /dev/gunyah must come from this build.
-          strings out/kernel/Image | grep -m1 'gh_vm_mgr' || \
-            { echo "FATAL: gh_vm_mgr strings missing"; exit 1; }
           strings out/kernel/Image | grep -m1 'Gunyah VM manager loaded'
+          strings out/kernel/Image | grep -m1 'gh_vm_mgr'
+
           sha256sum out/kernel/Image out/kernel/System.map
 
       - name: Cross-compile userspace probe

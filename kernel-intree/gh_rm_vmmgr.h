@@ -55,8 +55,8 @@ int gh_rm_vm_stop_raw(u16 vmid, u32 stop_reason, u8 flags);
 
 /*
  * There is no wrapper for gh_rm_call(): the vendor tree declares it in
- * gh_rm_drv_private.h and it is not static, so a file compiled into
- * gh_rm_drv can call it directly. That is how the Android common-kernel
+ * gh_rm_drv_private.h and it is not static, so this file, which is compiled into
+ * gh_rm_drv, calls it directly. That is how the Android common-kernel
  * messages absent from the vendor table (VM_SET_BOOT_CONTEXT above all)
  * reach RM, with a clean rm_err instead of a hang when unsupported.
  */

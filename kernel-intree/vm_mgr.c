@@ -2,11 +2,11 @@
 /*
  * Gunyah VM manager for the Redmi K60 (mondrian, SM8475).
  *
- * In-tree driver. Lives in drivers/virt/gunyah and is compiled into
- * gh_rm_drv's object list so it can reach gh_rm_call() and the RM notifier
- * chain directly. The vendor gh_arm_drv / gh_msgq / gh_dbl / gh_ctrl /
- * gh_virtio_backend drivers are untouched and keep serving DRM, qrtr and
- * the virtio backends.
+ * In-tree driver. Built into vmlinux (CONFIG_GH_VM_MGR=y) so it can call
+ * gh_rm_call() directly: that symbol is not exported, and exporting it
+ * would widen the vendor gh_rm_drv ABI for no benefit. The vendor
+ * gh_arm_drv / gh_msgq / gh_dbl / gh_ctrl / gh_virtio_backend drivers are
+ * untouched and keep serving DRM, qrtr and the virtio backends.
  *
  * The UABI exposed here is the crosvm "droidvm" ABI (see the uapi header in
  * this directory). Numbering is fixed by the shipped crosvm binary and must
@@ -17,8 +17,8 @@
  * VM_SET_FIRMWARE_MEM messages, so the upstream 6.6 gh_vm_start() sequence
  * cannot be replayed here. Instead the guest image is handed over as an
  * ordinary memory parcel and the entry point is set with
- * GH_VM_SET_BOOT_CONTEXT, which the Android common kernel introduced
- * precisely because some RMs do not accept an image descriptor.
+ * GH_VM_SET_BOOT_CONTEXT, which upstream Gunyah added precisely because
+ * some resource managers do not accept an image descriptor.
  */
 
 #define pr_fmt(fmt) "gh_vm_mgr: " fmt
@@ -1024,23 +1024,31 @@ static int gh_vm_start(struct gh_vm *ghvm)
 	mutex_unlock(&ghvm->mm_lock);
 
 	/*
-	 * VM_SET_BOOT_CONTEXT is an Android common-kernel addition and is not
-	 * in the vendor message table. Send it directly: if RM does not know
-	 * it we get a clean rm_err instead of a hang.
+	 * VM_SET_BOOT_CONTEXT is not in the vendor message table. Send it
+	 * straight through gh_rm_call(): if this RM does not know it we get
+	 * a clean rm_err and carry on, rather than a hang.
 	 */
 	for (i = 0; i < ghvm->n_boot_ctx; i++) {
 		/*
-		 * Native-endian, like every other vendor VM payload.
-		 * See gh_rm_msgid_ext.h for why this layout is unverified.
+		 * Little-endian, unlike the vendor VM payloads. The message
+		 * ID and this layout both come from the upstream v17
+		 * rsc_mgr_rpc.c hunk; see gh_rm_msgid_ext.h.
 		 */
 		struct gh_vm_set_boot_ctx_req req = {0};
 		size_t resp_size;
 		int rm_err;
 		void *resp;
 
-		req.vmid = ghvm->vmid;
-		req.reg = ghvm->boot_ctx[i].reg;
-		req.value = ghvm->boot_ctx[i].value;
+		/*
+		 * The UABI packs the register id as
+		 * (reg_set << GH_VM_BOOT_CONTEXT_REG_SHIFT) | reg_index,
+		 * while the wire format wants two separate u8 fields.
+		 */
+		req.vmid = cpu_to_le16(ghvm->vmid);
+		req.reg_set = ghvm->boot_ctx[i].reg >>
+			       GH_VM_BOOT_CONTEXT_REG_SHIFT;
+		req.reg_index = ghvm->boot_ctx[i].reg & 0xff;
+		req.value = cpu_to_le64(ghvm->boot_ctx[i].value);
 
 		resp = gh_rm_call(GH_RM_RPC_MSG_ID_CALL_VM_SET_BOOT_CONTEXT,
 				  &req, sizeof(req), &resp_size, &rm_err);

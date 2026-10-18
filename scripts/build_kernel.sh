@@ -33,8 +33,16 @@ gzip -dc "$ROOT/config/config.gz" > "$KERNEL_SRC/.config"
     --disable MODULE_SIG \
     --enable MODULE_SCMVERSION \
     --disable LTO_CLANG_FULL \
-    --enable LTO_CLANG_THIN \
-    --enable GH_VM_MGR
+    --enable LTO_CLANG_THIN
+
+# GH_VM_MGR=y rather than =m.
+#
+# As a module, gh_vm_mgr.o would have to be linked into gh_rm_drv (it needs
+# the file-static gh_rm_call()), which means rebuilding and replacing the
+# vendor gh_rm_drv.ko that DRM, qrtr and the virtio backends already load.
+# Built in, the VM manager adds nothing to the module set and every vendor
+# .ko stays byte-identical to what the device already ships.
+"$KERNEL_SRC/scripts/config" --file "$KERNEL_SRC/.config" --enable GH_VM_MGR
 
 printf '%s\n' 'g19f54b03cc87' > "$KERNEL_SRC/.scmversion"
 export LOCALVERSION=
@@ -48,9 +56,9 @@ if [[ "$RELEASE" != "$TARGET_RELEASE" ]]; then
     exit 1
 fi
 
-# 3. Sanity check: the VM manager must actually be compiled in.
-if ! grep -q '^CONFIG_GH_VM_MGR=' "$KERNEL_SRC/.config"; then
-    echo "错误：CONFIG_GH_VM_MGR 未出现在 .config" >&2
+# 3. Sanity check: the VM manager must be enabled, not silently dropped.
+if ! grep -q '^CONFIG_GH_VM_MGR=y$' "$KERNEL_SRC/.config"; then
+    echo "错误：CONFIG_GH_VM_MGR 不是 y：$(grep '^CONFIG_GH_VM_MGR=' "$KERNEL_SRC/.config")" >&2
     exit 1
 fi
 
@@ -69,11 +77,15 @@ echo "已生成 $OUT_DIR/Image"
 file "$OUT_DIR/Image"
 sha256sum "$OUT_DIR/Image"
 
-# 4. Confirm the driver made it into the image.
-if command -v nm >/dev/null 2>&1 && [[ -f "$KERNEL_SRC/vmlinux" ]]; then
-    if nm "$KERNEL_SRC/vmlinux" 2>/dev/null | grep -q 'gh_vm_mgr_init'; then
+# 4. The driver must actually be in the Image now, not in a module.
+if [[ -f "$KERNEL_SRC/vmlinux" ]]; then
+    if nm "$KERNEL_SRC/vmlinux" 2>/dev/null | grep -q ' gh_vm_mgr_init'; then
         echo "OK: gh_vm_mgr_init present in vmlinux"
     else
-        echo "警告：vmlinux 中未找到 gh_vm_mgr_init" >&2
+        echo "错误：vmlinux 中未找到 gh_vm_mgr_init" >&2
+        exit 1
     fi
+    strings "$KERNEL_SRC/vmlinux" | grep -m1 'Gunyah VM manager loaded'
+else
+    echo "警告：没有 vmlinux，跳过符号检查" >&2
 fi

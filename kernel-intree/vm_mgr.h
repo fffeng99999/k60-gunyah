@@ -37,13 +37,14 @@ enum gh_rm_res_type {
 /*
  * Wire layout of one VM_GET_HYP_RESOURCES entry on this kernel.
  *
- * This is NOT the 6.6 struct gh_rm_hyp_resource: the vendor payload splits
- * the 64-bit fields into low/high halves.
+ * This is NOT the upstream v17 struct gunyah_rm_hyp_resource: the
+ * vendor payload splits the 64-bit fields into low/high halves, and
+ * partner_vmid is native-endian rather than __le16.
  */
 struct gh_vmmgr_hyp_res_entry {
 	u8 res_type;
 	u8 reserved;
-	__le16 partner_vmid;
+	gh_vmid_t partner_vmid;
 	__le32 resource_handle;
 	__le32 resource_label;
 	__le32 cap_id_low;
