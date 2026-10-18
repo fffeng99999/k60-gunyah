@@ -1224,6 +1224,12 @@ static long gh_vm_ioctl(struct file *filp, unsigned int cmd,
 		break;
 	}
 	case GH_VM_SET_DTB_CONFIG: {
+		/*
+		 * Stored for later use. The device RM has no VM_CONFIG_IMAGE,
+		 * so there is nothing to hand the DTB to yet; the field exists
+		 * so the ioctl succeeds and crosvm's setup sequence does not
+		 * abort before reaching GH_VM_START.
+		 */
 		struct gh_vm_dtb_config dtb_config;
 
 		if (copy_from_user(&dtb_config, argp, sizeof(dtb_config)))
@@ -1253,6 +1259,10 @@ static long gh_vm_ioctl(struct file *filp, unsigned int cmd,
 		break;
 	}
 	case GH_VM_ANDROID_SET_FW_CONFIG: {
+		/*
+		 * Same as the DTB config: recorded so the ioctl succeeds, but
+		 * the device RM has no VM_SET_FIRMWARE_MEM to send it to.
+		 */
 		struct gh_vm_firmware_config fw_config;
 
 		if (copy_from_user(&fw_config, argp, sizeof(fw_config)))

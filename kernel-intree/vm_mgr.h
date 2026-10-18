@@ -145,6 +145,11 @@ struct gh_vm_boot_ctx_entry {
 
 struct gh_vm {
 	u16 vmid;
+	/*
+	 * Kept for parity with upstream. The miscdevice holds the only
+	 * struct device this driver owns, so per-VM devices are not
+	 * allocated; every pr_* here uses the module prefix instead.
+	 */
 	struct device *parent;
 	enum gh_rm_vm_auth_mechanism auth;
 	struct gh_vm_dtb_config dtb_config;
