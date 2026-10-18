@@ -158,9 +158,7 @@ static int gh_vm_mem_parcel_out(struct gh_vm *ghvm, struct gh_vm_mem *mapping)
 {
 	struct gh_acl_desc *acl_desc;
 	struct gh_sgl_desc *sgl_desc;
-	struct gh_mem_attr_desc *attr_desc;
 	gh_vmid_t host_vmid = GH_VMID_INVAL;
-	u32 n_sgl;
 	int i, ret;
 
 	acl_desc = kzalloc(sizeof(*acl_desc) +
@@ -177,16 +175,9 @@ static int gh_vm_mem_parcel_out(struct gh_vm *ghvm, struct gh_vm_mem *mapping)
 		goto free_acl;
 	}
 
-	attr_desc = kzalloc(sizeof(*attr_desc), GFP_KERNEL);
-	if (!attr_desc) {
-		ret = -ENOMEM;
-		goto free_sgl;
-	}
-
 	/*
 	 * The vendor descriptors and the VM manager parcel entries are
 	 * layout-identical but distinct types, so copy element by element.
-	 * This also keeps the compiler honest if either side ever changes.
 	 */
 	for (i = 0; i < mapping->parcel.n_acl_entries; i++) {
 		acl_desc->acl_entries[i].vmid =
@@ -196,6 +187,15 @@ static int gh_vm_mem_parcel_out(struct gh_vm *ghvm, struct gh_vm_mem *mapping)
 		acl_desc->acl_entries[i].reserved =
 			mapping->parcel.acl_entries[i].reserved;
 	}
+
+	/*
+	 * Entry 0 is always the guest. Its VMID is not known when the memory
+	 * region is registered (that happens at GH_VM_SET_USER_MEM_REGION,
+	 * before the VMID exists), so fill it in here, after VM_ALLOCATE.
+	 * Leaving it as the kzalloc zero would tell RM to give the parcel to
+	 * VMID 0.
+	 */
+	acl_desc->acl_entries[0].vmid = ghvm->vmid;
 	acl_desc->n_acl_entries = mapping->parcel.n_acl_entries;
 
 	for (i = 0; i < mapping->parcel.n_sgl_entries; i++) {
@@ -205,35 +205,38 @@ static int gh_vm_mem_parcel_out(struct gh_vm *ghvm, struct gh_vm_mem *mapping)
 			mapping->parcel.sgl_entries[i].size;
 	}
 	sgl_desc->n_sgl_entries = mapping->parcel.n_sgl_entries;
-	n_sgl = mapping->parcel.n_sgl_entries;
 
 	if (mapping->share_type == VM_MEM_SHARE) {
 		ret = gh_rm_get_vmid(GH_PRIMARY_VM, &host_vmid);
 		if (ret) {
 			pr_warn("gh_rm_get_vmid(primary) failed: %d\n", ret);
-			goto free_attr;
+			goto free_sgl;
 		}
 	}
 
-	if (mapping->share_type == VM_MEM_SHARE) {
+	/*
+	 * attr_desc must be NULL, not an empty descriptor:
+	 * gh_rm_mem_share_lend_helper() rejects a non-NULL mem_attr_desc with
+	 * n_mem_attr_entries == 0 (-EINVAL). We never send memory attributes.
+	 */
+	if (mapping->share_type == VM_MEM_SHARE)
 		ret = gh_rm_mem_share(GH_RM_MEM_TYPE_NORMAL,
 				      GH_RM_MEM_SHARE_SANITIZE,
 				      mapping->parcel.label, acl_desc,
-				      sgl_desc, attr_desc,
+				      sgl_desc, NULL,
 				      &mapping->parcel.mem_handle);
-	} else {
+	else
 		ret = gh_rm_mem_lend(GH_RM_MEM_TYPE_NORMAL,
 				     GH_RM_MEM_LEND_SANITIZE,
 				     mapping->parcel.label, acl_desc,
-				     sgl_desc, attr_desc,
+				     sgl_desc, NULL,
 				     &mapping->parcel.mem_handle);
-	}
 
 	if (ret) {
 		pr_warn("failed to %s parcel %d: %d\n",
 			mapping->share_type == VM_MEM_LEND ? "lend" : "share",
 			mapping->parcel.label, ret);
-		goto free_attr;
+		goto free_sgl;
 	}
 
 	/*
@@ -257,15 +260,7 @@ static int gh_vm_mem_parcel_out(struct gh_vm *ghvm, struct gh_vm_mem *mapping)
 		}
 	}
 
-	for (i = 0; i < n_sgl; i++)
-		pr_debug("parcel %d sgl[%d] ipa=%#llx size=%#llx\n",
-			 mapping->parcel.label, i,
-			 mapping->parcel.sgl_entries[i].ipa_base,
-			 mapping->parcel.sgl_entries[i].size);
-
 	ret = 0;
-free_attr:
-	kfree(attr_desc);
 free_sgl:
 	kfree(sgl_desc);
 free_acl:
