@@ -983,21 +983,29 @@ static int gh_vm_start(struct gh_vm *ghvm)
 	struct gh_vm_mem *mapping;
 	int ret, i;
 
+	/*
+	 * Hold the write lock for the whole sequence. Without it two concurrent
+	 * GH_VM_START ioctls could both observe NO_STATE and each allocate a
+	 * VMID, leaking one.
+	 */
 	down_write(&ghvm->status_lock);
+
 	if (ghvm->vm_status != GH_RM_VM_STATUS_NO_STATE) {
 		up_write(&ghvm->status_lock);
 		return 0;
 	}
-	up_write(&ghvm->status_lock);
 
 	ghvm->nb.notifier_call = gh_vm_rm_notification;
 	ret = gh_rm_register_notifier(&ghvm->nb);
-	if (ret)
+	if (ret) {
+		up_write(&ghvm->status_lock);
 		return ret;
+	}
 
 	ret = gh_rm_vm_alloc_vmid_any(&ghvm->vmid);
 	if (ret < 0) {
 		gh_rm_unregister_notifier(&ghvm->nb);
+		up_write(&ghvm->status_lock);
 		return ret;
 	}
 	ghvm->vm_status = GH_RM_VM_STATUS_INIT;
@@ -1035,7 +1043,7 @@ static int gh_vm_start(struct gh_vm *ghvm)
 		req.value = ghvm->boot_ctx[i].value;
 
 		resp = gh_rm_call(GH_RM_RPC_MSG_ID_CALL_VM_SET_BOOT_CONTEXT,
-				      &req, sizeof(req), &resp_size, &rm_err);
+				  &req, sizeof(req), &resp_size, &rm_err);
 		if (rm_err || IS_ERR_OR_NULL(resp)) {
 			pr_warn("VM_SET_BOOT_CONTEXT reg=%#x rejected: rm_err=%d\n",
 				ghvm->boot_ctx[i].reg, rm_err);
@@ -1071,9 +1079,17 @@ static int gh_vm_start(struct gh_vm *ghvm)
 
 	ghvm->vm_status = GH_RM_VM_STATUS_RUNNING;
 	pr_info("VM %u running\n", ghvm->vmid);
+	up_write(&ghvm->status_lock);
 	return 0;
 
 err:
+	/*
+	 * Leave vm_status at INIT or INIT_FAILED. gh_vm_free() reads it to
+	 * decide what to release: it skips VM_RESET, which RM rejects for a
+	 * VM that never came up, but still deallocates the VMID. Clearing
+	 * the state here would leak the VMID.
+	 */
+	up_write(&ghvm->status_lock);
 	gh_vm_put(ghvm);
 	return ret;
 }
@@ -1088,10 +1104,19 @@ static int gh_vm_ensure_started(struct gh_vm *ghvm)
 
 	if (unlikely(ghvm->vm_status == GH_RM_VM_STATUS_NO_STATE)) {
 		up_read(&ghvm->status_lock);
+		/*
+		 * gh_vm_start() serialises on the write lock, so the status it
+		 * leaves behind is final. Re-reading it once below is enough;
+		 * recursing would turn a start failure into a confusing
+		 * -ENODEV instead of the real error.
+		 */
 		ret = gh_vm_start(ghvm);
 		if (ret)
 			return ret;
-		return gh_vm_ensure_started(ghvm);
+
+		ret = down_read_interruptible(&ghvm->status_lock);
+		if (ret)
+			return ret;
 	}
 
 	if (unlikely(ghvm->vm_status != GH_RM_VM_STATUS_RUNNING))
