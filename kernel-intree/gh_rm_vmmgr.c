@@ -1,10 +1,45 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
+ * K60 in-tree Resource Manager extensions for the VM manager.
+ *
+ * This file is compiled into gh_rm_drv (gh_rm_drv-y in the Makefile) so it
+ * can use the module-global gh_rm_call() and the RM notifier chain
+ * directly. Nothing here changes the behaviour of the existing vendor
+ * clients, and gh_rm_vmmgr.o has no module_init, so adding it does not
+ * change when or whether gh_rm_drv loads.
+ *
+ * The vendor gh_rm_iface.c keeps a fixed enum gh_vm_names -> vmid table
+ * (gh_vm_table) and refuses a second allocation for the same name with
+ * -EINVAL, and gh_reset_vm_prop_table_entry() cannot clear an entry that
+ * RM never released. That makes it impossible to create more than one
+ * non-trusted guest VM from a tree-out-of-tree module.
+ *
+ * These functions talk to RM directly and deliberately bypass gh_vm_table.
+ * They are the kernel-side counterpart of what a userspace VMM needs.
+ */
+
+#define pr_fmt(fmt) "gh_rm_vmmgr: " fmt
+
+#include <linux/slab.h>
+#include <linux/wait.h>
+#include <linux/notifier.h>
+#include <linux/string.h>
+
+#include <linux/gunyah/gh_common.h>
+#include <linux/gunyah/gh_errno.h>
+#include <linux/gunyah/gh_rm_drv.h>
+
+#include "gh_rm_drv_private.h"
+#include "gh_rm_vmmgr.h"
+#include "gh_rm_msgid_ext.h"
+
+#include <uapi/linux/gunyah.h>	/* GH_VM_BOOT_CONTEXT_REG_SHIFT */
+
+/*
  * VM_ALLOCATE and VM_DEALLOCATE use the vendor payload structs, which are
  * native-endian, not little-endian like the 6.6 wire format. The structs
  * come from gh_rm_drv_private.h and must not be redefined here.
  */
-
 int gh_rm_vm_alloc_vmid_any(u16 *vmid)
 {
 	struct gh_vm_allocate_req_payload req = {0};
@@ -323,12 +358,47 @@ int gh_rm_vm_stop_raw(u16 vmid, u32 stop_reason, u8 flags)
 EXPORT_SYMBOL_GPL(gh_rm_vm_stop_raw);
 
 /*
- * NOTE: gh_rm_call() is NOT static in the vendor tree and is declared
- * in gh_rm_drv_private.h, so it is callable directly from any file
- * compiled into gh_rm_drv. There is deliberately no wrapper here.
+ * The only raw RPC the VM manager needs, exported deliberately.
  *
- * This matters for the Android common-kernel messages the vendor
- * driver never learned about, most importantly VM_SET_BOOT_CONTEXT:
- * sending them straight through gh_rm_call() yields a clean rm_err
- * when RM does not support them, instead of a silent hang.
+ * GH_VM_MGR depends on GH_RM_DRV, and the device config sets
+ * CONFIG_GH_RM_DRV=m, so GH_VM_MGR can only be n or m and the VM manager
+ * has to be its own module. That module cannot see the module-global
+ * gh_rm_call() in gh_rm_core.c, hence this single narrow export rather
+ * than exporting the generic entry point.
+ *
+ * VM_SET_BOOT_CONTEXT is absent from the vendor message table. It is
+ * little-endian, unlike the vendor payloads, and its register id is two
+ * u8 fields: the UABI packs them as
+ * (reg_set << GH_VM_BOOT_CONTEXT_REG_SHIFT) | reg_index.
+ */
+int gh_rm_set_vm_boot_context(u16 vmid, u32 reg, u64 value)
+{
+	struct gh_vm_set_boot_ctx_req req = {0};
+	size_t resp_size;
+	int rm_err;
+	void *resp;
+
+	req.vmid = cpu_to_le16(vmid);
+	req.reg_set = reg >> GH_VM_BOOT_CONTEXT_REG_SHIFT;
+	req.reg_index = reg & 0xff;
+	req.value = cpu_to_le64(value);
+
+	resp = gh_rm_call(GH_RM_RPC_MSG_ID_CALL_VM_SET_BOOT_CONTEXT,
+			  &req, sizeof(req), &resp_size, &rm_err);
+	if (rm_err) {
+		pr_warn("VM_SET_BOOT_CONTEXT(vmid=%u reg=%#x) rejected by RM: rm_err=%d\n",
+			vmid, reg, rm_err);
+		kfree(resp);
+		return gh_remap_error(rm_err);
+	}
+	if (IS_ERR_OR_NULL(resp)) {
+		pr_warn("VM_SET_BOOT_CONTEXT(vmid=%u reg=%#x) failed: %ld\n",
+			vmid, reg, PTR_ERR(resp));
+		return PTR_ERR(resp);
+	}
+
+	kfree(resp);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(gh_rm_set_vm_boot_context);
  */

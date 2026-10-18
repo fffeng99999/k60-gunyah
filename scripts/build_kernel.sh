@@ -33,16 +33,8 @@ gzip -dc "$ROOT/config/config.gz" > "$KERNEL_SRC/.config"
     --disable MODULE_SIG \
     --enable MODULE_SCMVERSION \
     --disable LTO_CLANG_FULL \
-    --enable LTO_CLANG_THIN
-
-# GH_VM_MGR=y rather than =m.
-#
-# As a module, gh_vm_mgr.o would have to be linked into gh_rm_drv (it needs
-# the file-static gh_rm_call()), which means rebuilding and replacing the
-# vendor gh_rm_drv.ko that DRM, qrtr and the virtio backends already load.
-# Built in, the VM manager adds nothing to the module set and every vendor
-# .ko stays byte-identical to what the device already ships.
-"$KERNEL_SRC/scripts/config" --file "$KERNEL_SRC/.config" --enable GH_VM_MGR
+    --enable LTO_CLANG_THIN \
+    --module GH_VM_MGR
 
 printf '%s\n' 'g19f54b03cc87' > "$KERNEL_SRC/.scmversion"
 export LOCALVERSION=
@@ -56,13 +48,22 @@ if [[ "$RELEASE" != "$TARGET_RELEASE" ]]; then
     exit 1
 fi
 
-# 3. Sanity check: the VM manager must be enabled, not silently dropped.
-if ! grep -q '^CONFIG_GH_VM_MGR=y$' "$KERNEL_SRC/.config"; then
-    echo "错误：CONFIG_GH_VM_MGR 不是 y：$(grep '^CONFIG_GH_VM_MGR=' "$KERNEL_SRC/.config")" >&2
+# 3. Sanity checks.
+#
+# GH_VM_MGR must be =m: it depends on GH_RM_DRV, which the device config
+# sets to =m, so =y is not reachable without dropping the vendor
+# gh_rm_drv.ko that DRM, qrtr and the virtio backends load.
+if ! grep -q '^CONFIG_GH_VM_MGR=m$' "$KERNEL_SRC/.config"; then
+    echo "错误：CONFIG_GH_VM_MGR 不是 m：$(grep '^CONFIG_GH_VM_MGR=' "$KERNEL_SRC/.config")" >&2
+    exit 1
+fi
+if ! grep -q '^CONFIG_GH_RM_DRV=m$' "$KERNEL_SRC/.config"; then
+    echo "错误：CONFIG_GH_RM_DRV 被改动，厂商模块会被替换" >&2
     exit 1
 fi
 
 make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" Image
+make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" modules
 
 install -m 0644 "$KERNEL_SRC/arch/arm64/boot/Image" "$OUT_DIR/Image"
 install -m 0644 "$KERNEL_SRC/System.map" "$OUT_DIR/System.map"
@@ -73,19 +74,35 @@ for symvers in vmlinux.symvers Module.symvers; do
     fi
 done
 
+# 4. Collect the two modules that matter: the VM manager, and gh_rm_drv
+#    which now also carries gh_rm_vmmgr.o.
+mkdir -p "$OUT_DIR/modules"
+for ko in gh_vm_mgr.ko gh_rm_drv.ko; do
+    src=$(find "$KERNEL_SRC/drivers/virt/gunyah" -maxdepth 1 -name "$ko" \
+          -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+    if [[ -z "${src:-}" ]]; then
+        echo "错误：未找到 $ko" >&2
+        exit 1
+    fi
+    install -m 0644 "$src" "$OUT_DIR/modules/$ko"
+    echo "已生成 $OUT_DIR/modules/$ko ($(stat -c%s "$src") bytes)"
+done
+
 echo "已生成 $OUT_DIR/Image"
 file "$OUT_DIR/Image"
 sha256sum "$OUT_DIR/Image"
 
-# 4. The driver must actually be in the Image now, not in a module.
-if [[ -f "$KERNEL_SRC/vmlinux" ]]; then
-    if nm "$KERNEL_SRC/vmlinux" 2>/dev/null | grep -q ' gh_vm_mgr_init'; then
-        echo "OK: gh_vm_mgr_init present in vmlinux"
-    else
-        echo "错误：vmlinux 中未找到 gh_vm_mgr_init" >&2
-        exit 1
-    fi
-    strings "$KERNEL_SRC/vmlinux" | grep -m1 'Gunyah VM manager loaded'
-else
-    echo "警告：没有 vmlinux，跳过符号检查" >&2
+# 5. The VM manager module must carry the device vermagic or insmod refuses it.
+VMC="$(modinfo -F vermagic "$OUT_DIR/modules/gh_vm_mgr.ko")"
+if [[ "$VMC" != "5.10.252-gki-g19f54b03cc87 SMP preempt mod_unload modversions aarch64" ]]; then
+    echo "错误：gh_vm_mgr.ko vermagic 不匹配：$VMC" >&2
+    exit 1
 fi
+echo "OK: gh_vm_mgr.ko vermagic 正确"
+
+# gh_rm_drv must now contain the RM extensions.
+if ! strings "$OUT_DIR/modules/gh_rm_drv.ko" | grep -q 'gh_rm_vmmgr'; then
+    echo "错误：gh_rm_drv.ko 中没有 gh_rm_vmmgr" >&2
+    exit 1
+fi
+echo "OK: gh_rm_drv.ko 包含 gh_rm_vmmgr.o"

@@ -2,10 +2,8 @@
 #
 # K60 (mondrian, SM8475) in-tree Gunyah VM manager.
 #
-# These objects are appended to gh_rm_drv's object list so they can use the
-# file-static gh_rm_call() in gh_rm_core.c. Selecting GH_VM_MGR therefore
-# also builds gh_rm_drv, which the DRM, qrtr and virtio backends already
-# depend on.
+# This block is inserted into the "if GUNYAH_DRIVERS ... endif" body of
+# drivers/virt/gunyah/Kconfig by apply_intree.sh.
 
 config GH_VM_MGR
 	tristate "Gunyah VM manager (/dev/gunyah)"
@@ -14,13 +12,16 @@ config GH_VM_MGR
 	select EVENTFD
 	help
 	  Creates /dev/gunyah and implements the VM create / configure /
-	  start / stop ioctls that a userspace virtual machine manager
-	  needs, including vCPU, irqfd and ioeventfd functions.
+	  start / stop ioctls a userspace virtual machine manager needs,
+	  including vCPU, irqfd and ioeventfd functions.
 
-	  This is required by Android VMMs such as DroidVM and crosvm. The
-	  vendor kernel ships the lower Gunyah drivers but not this layer,
-	  which is why /dev/gunyah is absent by default.
+	  Required by Android VMMs such as DroidVM and crosvm. The vendor
+	  kernel ships the lower Gunyah drivers but not this layer, which
+	  is why /dev/gunyah is absent by default.
 
-	  Say M to build it as a module, or Y to build it in.
+	  Note this cannot be built in: it depends on GH_RM_DRV, which the
+	  vendor config sets to =m, and turning that into =y would mean
+	  dropping gh_rm_drv.ko, the module DRM, qrtr and the virtio
+	  backends load. Say M.
 
 	  If unsure, say M.

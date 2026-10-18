@@ -2,11 +2,11 @@
 /*
  * Gunyah VM manager for the Redmi K60 (mondrian, SM8475).
  *
- * In-tree driver. Built into vmlinux (CONFIG_GH_VM_MGR=y) so it can call
- * gh_rm_call() directly: that symbol is not exported, and exporting it
- * would widen the vendor gh_rm_drv ABI for no benefit. The vendor
- * gh_arm_drv / gh_msgq / gh_dbl / gh_ctrl / gh_virtio_backend drivers are
- * untouched and keep serving DRM, qrtr and the virtio backends.
+ * A separate module (CONFIG_GH_VM_MGR=m). GH_VM_MGR depends on
+ * GH_RM_DRV, which the device config sets to =m, so =y is not a
+ * legal value here. The vendor gh_arm_drv / gh_msgq / gh_dbl /
+ * gh_ctrl / gh_virtio_backend drivers are untouched and keep
+ * serving DRM, qrtr and the virtio backends.
  *
  * The UABI exposed here is the crosvm "droidvm" ABI (see the uapi header in
  * this directory). Numbering is fixed by the shipped crosvm binary and must
@@ -50,7 +50,6 @@
 
 #include "gh_rm_vmmgr.h"
 #include "vm_mgr.h"
-#include "gh_rm_drv_private.h"
 #include "gh_rm_msgid_ext.h"
 #include "gh_vm_mgr_compat.h"
 
@@ -1024,44 +1023,23 @@ static int gh_vm_start(struct gh_vm *ghvm)
 	mutex_unlock(&ghvm->mm_lock);
 
 	/*
-	 * VM_SET_BOOT_CONTEXT is not in the vendor message table. Send it
-	 * straight through gh_rm_call(): if this RM does not know it we get
-	 * a clean rm_err and carry on, rather than a hang.
+	 * VM_SET_BOOT_CONTEXT is not in the vendor message table, and this is
+	 * a module so it cannot reach gh_rm_call() directly. The narrow wrapper
+	 * in gh_rm_vmmgr.c owns the wire format; if this RM does not know the
+	 * message we get a clean error and carry on rather than a hang.
 	 */
 	for (i = 0; i < ghvm->n_boot_ctx; i++) {
-		/*
-		 * Little-endian, unlike the vendor VM payloads. The message
-		 * ID and this layout both come from the upstream v17
-		 * rsc_mgr_rpc.c hunk; see gh_rm_msgid_ext.h.
-		 */
-		struct gh_vm_set_boot_ctx_req req = {0};
-		size_t resp_size;
-		int rm_err;
-		void *resp;
-
-		/*
-		 * The UABI packs the register id as
-		 * (reg_set << GH_VM_BOOT_CONTEXT_REG_SHIFT) | reg_index,
-		 * while the wire format wants two separate u8 fields.
-		 */
-		req.vmid = cpu_to_le16(ghvm->vmid);
-		req.reg_set = ghvm->boot_ctx[i].reg >>
-			       GH_VM_BOOT_CONTEXT_REG_SHIFT;
-		req.reg_index = ghvm->boot_ctx[i].reg & 0xff;
-		req.value = cpu_to_le64(ghvm->boot_ctx[i].value);
-
-		resp = gh_rm_call(GH_RM_RPC_MSG_ID_CALL_VM_SET_BOOT_CONTEXT,
-				  &req, sizeof(req), &resp_size, &rm_err);
-		if (rm_err || IS_ERR_OR_NULL(resp)) {
-			pr_warn("VM_SET_BOOT_CONTEXT reg=%#x rejected: rm_err=%d\n",
-				ghvm->boot_ctx[i].reg, rm_err);
-			kfree(resp);
-		} else {
-			kfree(resp);
+		ret = gh_rm_set_vm_boot_context(ghvm->vmid,
+						ghvm->boot_ctx[i].reg,
+						ghvm->boot_ctx[i].value);
+		if (ret)
+			pr_warn("boot context reg=%#x value=%#llx: %d\n",
+				ghvm->boot_ctx[i].reg,
+				ghvm->boot_ctx[i].value, ret);
+		else
 			pr_info("boot context reg=%#x value=%#llx accepted\n",
 				ghvm->boot_ctx[i].reg,
 				ghvm->boot_ctx[i].value);
-		}
 	}
 
 	ret = gh_rm_vm_init(ghvm->vmid);

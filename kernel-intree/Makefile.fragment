@@ -2,15 +2,21 @@
 #
 # Appended to drivers/virt/gunyah/Makefile by apply_intree.sh
 
-# The VM manager is built in (=y) so it can call the non-exported
-# gh_rm_call() in gh_rm_core.c. It is deliberately NOT a module: as a
-# module it would need gh_rm_call() exported, which would widen the
-# vendor driver's ABI for no benefit.
+# The VM manager is a separate module.
+#
+# It cannot be =y: GH_VM_MGR depends on GH_RM_DRV and the device config
+# sets CONFIG_GH_RM_DRV=m, so the only legal values are n and m. Flipping
+# GH_RM_DRV to =y would mean building the vendor RM driver into the kernel
+# and dropping gh_rm_drv.ko, which DRM, qrtr and the virtio backends load.
+#
+# Because it is a module it cannot see the module-global gh_rm_call() in
+# gh_rm_core.c, so its one raw RPC (VM_SET_BOOT_CONTEXT) goes through the
+# narrow gh_rm_set_vm_boot_context() export below.
 obj-$(CONFIG_GH_VM_MGR) += gh_vm_mgr.o
 
-# The RM extensions must live in gh_rm_drv: they are the other half of the
-# same module and the vendor module is the one that owns the msgq
-# connection, the idr and the notifier chain.
+# The RM extensions live in gh_rm_drv. gh_rm_vmmgr.o has no module_init, so
+# adding it does not change when or whether gh_rm_drv loads, and the vendor
+# objects in that module stay exactly as they are.
 gh_rm_drv-$(CONFIG_GH_VM_MGR) += gh_rm_vmmgr.o
 
 gh_vm_mgr-y := vm_mgr.o gunyah_vcpu.o gunyah_irqfd.o gunyah_ioeventfd.o

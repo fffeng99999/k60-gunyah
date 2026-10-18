@@ -72,7 +72,7 @@ jobs:
           KERNEL_SRC="$PWD/.work/kernel" OUT_DIR="$PWD/out/kernel" \
             ./scripts/build_kernel.sh
 
-      - name: Verify Image and config
+      - name: Verify Image, config and modules
         run: |
           set -euxo pipefail
           file out/kernel/Image
@@ -81,16 +81,25 @@ jobs:
           test -s out/kernel/System.map
           test -s out/kernel/kernel.config
 
-          # GH_VM_MGR must be built in, not =m. As a module it would force
-          # gh_rm_drv to be rebuilt and replace the vendor module that DRM,
-          # qrtr and the virtio backends load.
-          grep -E '^CONFIG_GH_VM_MGR=y$' out/kernel/kernel.config
+          # GH_VM_MGR is =m: it depends on GH_RM_DRV, which the device
+          # config sets to =m, so =y is not reachable without dropping the
+          # vendor gh_rm_drv.ko that DRM, qrtr and the virtio backends load.
+          grep -E '^CONFIG_GH_VM_MGR=m$' out/kernel/kernel.config
+          grep -E '^CONFIG_GH_RM_DRV=m$' out/kernel/kernel.config
 
-          # /dev/gunyah must come from this build.
-          strings out/kernel/Image | grep -m1 'Gunyah VM manager loaded'
-          strings out/kernel/Image | grep -m1 'gh_vm_mgr'
+          # The VM manager module must carry the device vermagic.
+          test -s out/kernel/modules/gh_vm_mgr.ko
+          test "$(modinfo -F vermagic out/kernel/modules/gh_vm_mgr.ko)" = \
+            "5.10.252-gki-g19f54b03cc87 SMP preempt mod_unload modversions aarch64"
+          strings out/kernel/modules/gh_vm_mgr.ko | grep -m1 'Gunyah VM manager loaded'
 
-          sha256sum out/kernel/Image out/kernel/System.map
+          # gh_rm_drv must now carry the RM extensions, and must still be =m
+          # so the vendor module is replaced by an equivalent, not removed.
+          test -s out/kernel/modules/gh_rm_drv.ko
+          strings out/kernel/modules/gh_rm_drv.ko | grep -m1 'gh_rm_vmmgr'
+
+          sha256sum out/kernel/Image out/kernel/System.map \
+            out/kernel/modules/*.ko
 
       - name: Cross-compile userspace probe
         run: |
@@ -131,6 +140,8 @@ jobs:
             out/kernel/System.map
             out/kernel/kernel.config
             out/kernel/vmlinux.symvers
+            out/kernel/modules/gh_vm_mgr.ko
+            out/kernel/modules/gh_rm_drv.ko
             out/boot_vmmgr.img
             out/vmmgr_probe
           if-no-files-found: error
