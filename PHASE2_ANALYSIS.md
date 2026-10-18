@@ -1,6 +1,44 @@
-# 第二阶段可行性分析：为什么只靠当前可加载模块还不能补出 `/dev/gunyah`
+# 第二阶段可行性分析：VM manager 集成路径
 
 生成时间：2026-10-18
+更新：2026-10-18（设备实测后修订）
+
+## 0. 结论摘要
+
+**设备 Resource Manager 允许分配非 trusted 客户 VM。**
+
+在自编译 5.10.252 内核上加载 `gh_vmmgr` 并执行 RM VMID 分配，得到：
+
+```text
+gh_vmmgr: RM allocated vmid=45
+gh_vmmgr: alloc_vmid: ret=0 vmid=45
+```
+
+这推翻了本文早前“RM 可能只允许 trusted VM”的假设。`/dev/gunyah` 已由
+`gh_vmmgr` 创建成功（major 461），设备开机、SELinux、厂商模块均正常。
+
+实测确认阻塞点有三层：
+
+1. **VMID 分配可以，但回收不行**：`gh_rm_vm_alloc_vmid(GH_OEM_VM)` 成功返回
+   VMID 45，但 `gh_rm_vm_reset()` 和 `gh_rm_vm_dealloc_vmid()` 均返回 EPERM；
+2. **每个 VM 名称只能分配一次**：释放失败后再次分配同一名称返回 EINVAL，
+   因此现有 `gh_rm_*` API 无法创建多个客户 VM；
+3. **启动 VM 的接口缺失**：没有 vCPU run、guest memory lend/share 配置、
+   boot context 等 `/dev/gunyah` 完整 UAPI 所需的调用。
+
+因此结论是：**树外模块 + 现有厂商导出 API 不足以实现可用的 VM manager**。
+要继续必须把 VM manager 集成进内核源码树（Bootloader 已解锁、原分区已备份、
+自编译内核已验证可启动），而不是继续扩展树外模块。
+
+---
+
+## 历史结论（已修订，保留供追溯）
+
+以下第 1-6 节写于设备实测之前，其中关于 RM 只允许 trusted VM 的推测
+已被上面的实测数据推翻；关于“树外模块无法补齐 VM manager”的结论仍然
+成立，但原因是接口缺失而非 RM 授权。
+
+---
 
 ## 1. DroidVM/crosvm 需要什么 UAPI
 
@@ -180,3 +218,94 @@ gh_rm_get_vminfo(primary): guid=null uri=(null) name=(null) sign_auth=(null)
 1. 允许构建并刷入自定义 boot 镜像；
 2. 提供同版本 ROM 厂商内核源码/VM manager 模块；
 3. 只继续做只读能力探测，不承诺创建 VM。
+
+---
+
+## 附录：设备实测记录（2026-10-18）
+
+### A.1 `/dev/gunyah` 创建
+
+```text
+gh_vmmgr: Gunyah VM manager (additive) loaded
+gh_vmmgr: device /dev/gunyah created; autoload is off by default
+```
+
+设备节点：
+
+```text
+crw------- 1 root root 461, 0 /dev/gunyah
+SELinux: u:object_r:device:s0
+```
+
+`gh_rm_drv` 的 holders 中已包含 `gh_vmmgr`，证明依赖关系正确。
+
+### A.2 RM VMID 分配
+
+```text
+gh_vmmgr: probe_rm: ret=0 primary_vmid=3 has_uri=0 has_name=0
+gh_vmmgr: RM allocated vmid=45
+gh_vmmgr: alloc_vmid: ret=0 vmid=45
+```
+
+RM 接受了 `GH_OEM_VM` 名称的 VMID 分配请求，返回 VMID 45。
+
+### A.3 VMID 释放失败
+
+```text
+gh_vmmgr: gh_rm_vm_dealloc_vmid(45) failed: -1
+```
+
+`-1` 是 `gh_rm_call()` 返回的 Linux 负错误码，对应 EPERM。可能原因：
+
+- RM 要求 VM 先进入 `RESET` 状态才允许 deallocate；
+- 已启动/初始化的 VM 不能直接 deallocate；
+- RM 对该 RPC 的调用者有额外授权要求。
+
+下一步应先对已分配 VMID 调用 `gh_rm_vm_reset()`，再尝试 deallocate。
+
+### A.3.0 reset-first 实测（2026-10-18，重启后复测）
+
+重启清除残留状态后重新分配，并显式先 reset：
+
+```text
+gh_vmmgr: RM allocated vmid=45
+gh_vmmgr: alloc_vmid: ret=0 vmid=45
+gh_vmmgr: reset_vmid: gh_rm_vm_reset(45) ret=-1
+```
+
+卸载时走 reset + deallocate：
+
+```text
+gh_vmmgr: gh_rm_vm_reset(45) failed: -1
+gh_vmmgr: gh_rm_vm_dealloc_vmid(45) failed: -1
+```
+
+`gh_rm_vm_reset()` 同样返回 EPERM，因此 reset-first 假设不成立。
+结论：**RM 允许 primary VM 分配客户 VMID，但拒绝 primary VM 对该 VMID 执行
+reset 和 deallocate**。这与 RM 只信任特定调用者的策略一致，也意味着
+`gh_rm_*` 现有导出 API 无法支撑完整的 VM 生命周期管理。
+
+### A.3.1 重复分配返回 EINVAL
+
+在 VMID 45 未被成功释放的情况下再次加载模块并请求分配：
+
+```text
+gh_vmmgr: gh_rm_vm_alloc_vmid(GH_OEM_VM) failed: -22
+gh_vmmgr: alloc_vmid: ret=-22 vmid=0
+```
+
+`-22` 是 EINVAL。这印证了 `gh_rm_vm_alloc_vmid()` 的语义：它按 VM 名称
+（`enum gh_vm_names`）分配，每个名称只能持有一次。第一次成功拿到 VMID 45
+后 deallocate 失败，`GH_OEM_VM` 名称就被占用，后续同一名称的请求直接失败。
+
+**这是树外模块使用厂商 `gh_rm_*` API 的根本限制**：无法分配任意数量的客户 VM。
+
+### A.4 安全状态
+
+```text
+SELinux        = Enforcing
+boot_completed = 1
+uname -r       = 5.10.252-gki-g19f54b03cc87
+```
+
+模块加载/卸载后设备无异常，未影响正常使用。
