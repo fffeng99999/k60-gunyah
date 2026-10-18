@@ -1,51 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * K60 in-tree Resource Manager extensions for the VM manager.
- *
- * This file is compiled into gh_rm_drv (gh_rm_drv-y in the Makefile) so it
- * can use the file-static gh_rm_call() and gh_rm_notifier directly. Nothing
- * here changes the behaviour of the existing vendor clients.
+ * VM_ALLOCATE and VM_DEALLOCATE use the vendor payload structs, which are
+ * native-endian, not little-endian like the 6.6 wire format. The structs
+ * come from gh_rm_drv_private.h and must not be redefined here.
  */
-
-#define pr_fmt(fmt) "gh_rm_vmmgr: " fmt
-
-#include <linux/slab.h>
-#include <linux/wait.h>
-#include <linux/notifier.h>
-#include <linux/string.h>
-
-#include <linux/gunyah/gh_common.h>
-#include <linux/gunyah/gh_errno.h>
-#include <linux/gunyah/gh_rm_drv.h>
-
-#include "gh_rm_drv_private.h"
-#include "gh_rm_vmmgr.h"
-#include "gh_rm_msgid_ext.h"
-
-/* Same wire format the 6.6 rsc_mgr_rpc.c uses for VM_ALLOC_VMID. */
-struct gh_rm_vm_alloc_req {
-	__le16 vmid;
-	__le16 reserved;
-} __packed;
-
-struct gh_rm_vm_alloc_resp {
-	__le16 vmid;
-	__le16 reserved;
-} __packed;
 
 int gh_rm_vm_alloc_vmid_any(u16 *vmid)
 {
-	struct gh_rm_vm_alloc_req req = {
-		/* 0 = let RM choose, exactly like gh_rm_alloc_vmid(rm, 0) */
-		.vmid = 0,
-	};
-	struct gh_rm_vm_alloc_resp *resp;
+	struct gh_vm_allocate_req_payload req = {0};
+	struct gh_vm_allocate_resp_payload *resp;
 	size_t resp_size;
 	int rm_err, ret;
 
 	if (!vmid)
 		return -EINVAL;
 
+	/*
+	 * vmid 0 asks RM to pick one. The vendor wrapper always passes the
+	 * value read from DT, which for a dynamic VM is 0.
+	 */
 	resp = gh_rm_call(GH_RM_RPC_MSG_ID_CALL_VM_ALLOCATE,
 			  &req, sizeof(req), &resp_size, &rm_err);
 	if (rm_err) {
@@ -62,7 +35,7 @@ int gh_rm_vm_alloc_vmid_any(u16 *vmid)
 		return -EBADMSG;
 	}
 
-	ret = le16_to_cpu(resp->vmid);
+	ret = resp->vmid;
 	kfree(resp);
 
 	if (ret <= 0) {
@@ -271,12 +244,13 @@ EXPORT_SYMBOL_GPL(gh_rm_vm_unbind_virq);
 
 int gh_rm_vm_init(u16 vmid)
 {
-	struct gh_vm_common_vmid_req req = {
-		.vmid = cpu_to_le16(vmid),
-	};
+	struct gh_vm_init_req_payload req = {0};
+
 	size_t resp_size;
 	int rm_err;
 	void *resp;
+
+	req.vmid = vmid;
 
 	resp = gh_rm_call(GH_RM_RPC_MSG_ID_CALL_VM_INIT,
 			  &req, sizeof(req), &resp_size, &rm_err);
@@ -296,12 +270,13 @@ EXPORT_SYMBOL_GPL(gh_rm_vm_init);
 
 int gh_rm_vm_start_raw(u16 vmid)
 {
-	struct gh_vm_common_vmid_req req = {
-		.vmid = cpu_to_le16(vmid),
-	};
+	struct gh_vm_start_req_payload req = {0};
+
 	size_t resp_size;
 	int rm_err;
 	void *resp;
+
+	req.vmid = vmid;
 
 	resp = gh_rm_call(GH_RM_RPC_MSG_ID_CALL_VM_START,
 			  &req, sizeof(req), &resp_size, &rm_err);
@@ -348,18 +323,12 @@ int gh_rm_vm_stop_raw(u16 vmid, u32 stop_reason, u8 flags)
 EXPORT_SYMBOL_GPL(gh_rm_vm_stop_raw);
 
 /*
- * Re-export of the file-static gh_rm_call() in gh_rm_core.c.
+ * NOTE: gh_rm_call() is NOT static in the vendor tree and is declared
+ * in gh_rm_drv_private.h, so it is callable directly from any file
+ * compiled into gh_rm_drv. There is deliberately no wrapper here.
  *
- * The Android common kernel added RM messages that the vendor driver never
- * learned about, most importantly VM_SET_BOOT_CONTEXT. Sending them
- * directly gives a clean rm_err when RM does not support them, instead of
- * a silent hang.
+ * This matters for the Android common-kernel messages the vendor
+ * driver never learned about, most importantly VM_SET_BOOT_CONTEXT:
+ * sending them straight through gh_rm_call() yields a clean rm_err
+ * when RM does not support them, instead of a silent hang.
  */
-void *gh_rm_call_raw(u32 message_id, const void *req_buf,
-		     size_t req_buf_size, size_t *resp_buff_size,
-		     int *rm_error)
-{
-	return gh_rm_call(message_id, req_buf, req_buf_size, resp_buff_size,
-			  rm_error);
-}
-EXPORT_SYMBOL_GPL(gh_rm_call_raw);

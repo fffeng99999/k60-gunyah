@@ -50,6 +50,7 @@
 
 #include "gh_rm_vmmgr.h"
 #include "vm_mgr.h"
+#include "gh_rm_drv_private.h"
 #include "gh_rm_msgid_ext.h"
 #include "gh_vm_mgr_compat.h"
 
@@ -1020,16 +1021,20 @@ static int gh_vm_start(struct gh_vm *ghvm)
 	 * it we get a clean rm_err instead of a hang.
 	 */
 	for (i = 0; i < ghvm->n_boot_ctx; i++) {
-		struct gh_vm_set_boot_ctx_req req = {
-			.vmid = cpu_to_le16(ghvm->vmid),
-			.reg = cpu_to_le32(ghvm->boot_ctx[i].reg),
-			.value = cpu_to_le64(ghvm->boot_ctx[i].value),
-		};
+		/*
+		 * Native-endian, like every other vendor VM payload.
+		 * See gh_rm_msgid_ext.h for why this layout is unverified.
+		 */
+		struct gh_vm_set_boot_ctx_req req = {0};
 		size_t resp_size;
 		int rm_err;
 		void *resp;
 
-		resp = gh_rm_call_raw(GH_RM_RPC_MSG_ID_CALL_VM_SET_BOOT_CONTEXT,
+		req.vmid = ghvm->vmid;
+		req.reg = ghvm->boot_ctx[i].reg;
+		req.value = ghvm->boot_ctx[i].value;
+
+		resp = gh_rm_call(GH_RM_RPC_MSG_ID_CALL_VM_SET_BOOT_CONTEXT,
 				      &req, sizeof(req), &resp_size, &rm_err);
 		if (rm_err || IS_ERR_OR_NULL(resp)) {
 			pr_warn("VM_SET_BOOT_CONTEXT reg=%#x rejected: rm_err=%d\n",

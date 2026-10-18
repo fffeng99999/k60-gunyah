@@ -40,8 +40,8 @@ static int irqfd_wakeup(wait_queue_entry_t *wait, unsigned int mode,
 			int sync, void *key)
 {
 	struct gh_irqfd *irqfd = container_of(wait, struct gh_irqfd, wait);
-	__poll_t flags = key_to_poll(key);
 	int ret = 0;
+	__poll_t flags = key_to_poll(key);
 
 	if (flags & EPOLLIN) {
 		if (irqfd->ghrsc) {

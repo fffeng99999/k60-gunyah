@@ -15,6 +15,10 @@
 #ifndef _GH_RM_MSGID_EXT_H
 #define _GH_RM_MSGID_EXT_H
 
+#include <linux/types.h>
+
+#include <linux/gunyah/gh_common.h>
+
 /* VM management, upstream 6.6 numbering */
 #ifndef GH_RM_RPC_MSG_ID_CALL_VM_INIT
 #define GH_RM_RPC_MSG_ID_CALL_VM_INIT			0x5600000B
@@ -63,16 +67,30 @@ struct gh_vm_common_vmid_req {
 } __packed;
 
 /*
- * struct gh_vm_stop_req_payload - VM_STOP request body.
+ * struct gh_vm_init_req_payload - VM_INIT request body.
  *
- * Present in the vendor private header; declared here only so the new
- * gh_rm_vm_stop() helper compiles when that header is not included first.
+ * Not in the vendor tree because the vendor never calls VM_INIT. Same
+ * shape as VM_START / VM_DEALLOCATE / VM_RESET: a vmid plus padding.
+ * Native-endian, matching every other vendor VM payload.
  */
-struct gh_vm_stop_req_payload {
+struct gh_vm_init_req_payload {
 	gh_vmid_t vmid;
-	u8 flags;
-	u8 reserved;
-	u32 stop_reason;
+	u16 reserved;
+} __packed;
+
+/*
+ * struct gh_vm_set_boot_ctx_req - VM_SET_BOOT_CONTEXT request body.
+ *
+ * An Android common-kernel addition with no vendor or upstream equivalent,
+ * so the layout below is what the DroidVM crosvm binary was built against.
+ * If the ioctl is ever rejected with rm_err this is the first thing to
+ * re-check.
+ */
+struct gh_vm_set_boot_ctx_req {
+	gh_vmid_t vmid;
+	u16 reserved;
+	u32 reg;
+	u64 value;
 } __packed;
 
 #endif /* _GH_RM_MSGID_EXT_H */

@@ -61,13 +61,6 @@ struct gh_vmmgr_hyp_res_payload {
 	struct gh_vmmgr_hyp_res_entry entries[];
 } __packed;
 
-/* VM_SET_BOOT_CONTEXT request (Android common-kernel addition). */
-struct gh_vm_set_boot_ctx_req {
-	__le16 vmid;
-	__le16 reserved;
-	__le32 reg;
-	__le64 value;
-} __packed;
 
 struct gh_resource {
 	enum gh_rm_res_type type;

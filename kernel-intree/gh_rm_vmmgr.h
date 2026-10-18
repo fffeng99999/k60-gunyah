@@ -54,15 +54,12 @@ int gh_rm_vm_start_raw(u16 vmid);
 int gh_rm_vm_stop_raw(u16 vmid, u32 stop_reason, u8 flags);
 
 /*
- * Send an arbitrary RM RPC and wait for the reply.
- *
- * This is the file-static gh_rm_call() re-exported for the VM manager.
- * Needed because VM_SET_BOOT_CONTEXT and a few other Android extensions
- * are absent from the vendor message table.
+ * There is no wrapper for gh_rm_call(): the vendor tree declares it in
+ * gh_rm_drv_private.h and it is not static, so a file compiled into
+ * gh_rm_drv can call it directly. That is how the Android common-kernel
+ * messages absent from the vendor table (VM_SET_BOOT_CONTEXT above all)
+ * reach RM, with a clean rm_err instead of a hang when unsupported.
  */
-void *gh_rm_call_raw(u32 message_id, const void *req_buf,
-		     size_t req_buf_size, size_t *resp_buff_size,
-		     int *rm_error);
 
 /*
  * Fetch the hypervisor resources (vCPU cap ids, doorbells, msgqueues) that
