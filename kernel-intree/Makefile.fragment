@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Appended to drivers/virt/gunyah/Makefile by apply_intree.sh
+
+obj-$(CONFIG_GH_VM_MGR) += gh_vm_mgr.o
+
+# gh_rm_drv already contains gh_rm_core.o and gh_rm_iface.o. The VM manager
+# and its RM extensions are added to the same module so they can reach the
+# file-static gh_rm_call() without a symbol export.
+gh_rm_drv-$(CONFIG_GH_VM_MGR) += gh_rm_vmmgr.o
+gh_vm_mgr-y := vm_mgr.o gunyah_vcpu.o gunyah_irqfd.o gunyah_ioeventfd.o

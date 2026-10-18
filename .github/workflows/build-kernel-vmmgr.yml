@@ -1,0 +1,119 @@
+name: build-k60-kernel-vmmgr
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-k60-kernel-vmmgr
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      KERNEL_REPO: https://github.com/crdroidandroid/android_kernel_xiaomi_sm8450.git
+      KERNEL_COMMIT: 38c6baf4bb72f783bb3588f9f1240603632a6c83
+      TARGET_RELEASE: 5.10.252-gki-g19f54b03cc87
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc binutils bison ca-certificates ccache cpio curl device-tree-compiler \
+            file flex gpg kmod libelf-dev libssl-dev make python3 rsync unzip wget \
+            xz-utils zip
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/apt.llvm.org.gpg
+          echo 'deb https://apt.llvm.org/noble/ llvm-toolchain-noble-22 main' \
+            | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-22 lld-22 llvm-22
+          sudo mkdir -p /opt/llvm22/bin
+          for f in /usr/lib/llvm-22/bin/*; do
+            sudo ln -sf "$f" "/opt/llvm22/bin/$(basename "$f")"
+          done
+          echo /opt/llvm22/bin >> "$GITHUB_PATH"
+          /opt/llvm22/bin/clang --version
+
+      - name: Fetch exact kernel source
+        run: |
+          set -euxo pipefail
+          mkdir -p .work/kernel
+          git -C .work/kernel init
+          git -C .work/kernel remote add origin "$KERNEL_REPO"
+          git -C .work/kernel fetch --depth 1 origin "$KERNEL_COMMIT"
+          git -C .work/kernel checkout --detach FETCH_HEAD
+          grep -q '^SUBLEVEL = 252$' .work/kernel/Makefile
+          git -C .work/kernel show -s --format='%H %s'
+          # Prevent setlocalversion from appending "+" for a dirty tree.
+          rm -rf .work/kernel/.git
+
+      - name: Apply in-tree VM manager
+        run: |
+          set -euxo pipefail
+          chmod +x scripts/apply_intree.sh scripts/build_kernel.sh
+          KERNEL_SRC="$PWD/.work/kernel" ./scripts/apply_intree.sh
+          grep -n 'GH_VM_MGR' .work/kernel/drivers/virt/gunyah/Kconfig
+          grep -n 'GH_VM_MGR' .work/kernel/drivers/virt/gunyah/Makefile
+          ls -l .work/kernel/drivers/virt/gunyah/vm_mgr.c
+
+      - name: Build arm64 Image with VM manager
+        run: |
+          set -euxo pipefail
+          KERNEL_SRC="$PWD/.work/kernel" OUT_DIR="$PWD/out/kernel" \
+            ./scripts/build_kernel.sh
+
+      - name: Verify Image and config
+        run: |
+          set -euxo pipefail
+          file out/kernel/Image
+          strings out/kernel/Image | grep -m1 'Linux version 5.10.252-gki-g19f54b03cc87'
+          test -s out/kernel/Image
+          test -s out/kernel/System.map
+          test -s out/kernel/kernel.config
+          # The VM manager must be enabled, not silently dropped.
+          grep -E '^CONFIG_GH_VM_MGR=' out/kernel/kernel.config
+          # /dev/gunyah must come from this build.
+          strings out/kernel/Image | grep -m1 'gh_vm_mgr' || \
+            { echo "FATAL: gh_vm_mgr strings missing"; exit 1; }
+          strings out/kernel/Image | grep -m1 'Gunyah VM manager loaded'
+          sha256sum out/kernel/Image out/kernel/System.map
+
+      - name: Build userspace probe
+        run: |
+          set -euxo pipefail
+          command -v aarch64-linux-musl-gcc || sudo apt-get install -y --no-install-recommends musl-tools
+          # The probe is built on device if no cross toolchain is present.
+          echo "probe source: scripts/vmmgr_probe.c"
+
+      - name: Pack boot.img
+        run: |
+          set -euxo pipefail
+          python3 scripts/repack_boot_v4.py \
+            --stock-boot "$PWD/boot_a.img" \
+            --kernel "$PWD/out/kernel/Image" \
+            --output "$PWD/out/boot_vmmgr.img"
+          ls -l out/boot_vmmgr.img
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: k60-kernel-vmmgr-${{ github.sha }}
+          path: |
+            out/kernel/Image
+            out/kernel/System.map
+            out/kernel/kernel.config
+            out/kernel/vmlinux.symvers
+            out/boot_vmmgr.img
+            scripts/vmmgr_probe.c
+          if-no-files-found: error
+          retention-days: 30
