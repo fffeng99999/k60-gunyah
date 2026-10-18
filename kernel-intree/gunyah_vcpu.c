@@ -324,20 +324,34 @@ static bool gh_vcpu_populate(struct gh_vm_resource_ticket *ticket,
 		goto out;
 	}
 
-	vcpu->rsc = ghrsc;
-	init_completion(&vcpu->ready);
-
-	if (ghrsc->irq) {
-		ret = request_irq(ghrsc->irq, gh_vcpu_irq_handler,
-				  IRQF_TRIGGER_RISING, "gh_vcpu", vcpu);
-		if (ret)
-			pr_warn("request vcpu irq %d: %d\n", ghrsc->irq, ret);
-		else
-			enable_irq_wake(ghrsc->irq);
-	} else {
-		pr_warn("vcpu%d has no IRQ; cannot schedule\n",
+	/*
+	 * A vCPU with no interrupt can never be rescheduled by Gunyah, so
+	 * gh_vcpu_run() would block forever. Refuse to populate instead of
+	 * accepting a vCPU that cannot work.
+	 */
+	if (!ghrsc->irq) {
+		pr_warn("vcpu%d has no IRQ; refusing to use it\n",
 			vcpu->ticket.label);
+		ret = -ENODEV;
+		goto out;
 	}
+
+	/*
+	 * Request the IRQ before publishing vcpu->rsc. If request_irq()
+	 * fails, gh_vcpu_unpopulate() must not free_irq() a handler that was
+	 * never installed.
+	 */
+	ret = request_irq(ghrsc->irq, gh_vcpu_irq_handler,
+			  IRQF_TRIGGER_RISING, "gh_vcpu", vcpu);
+	if (ret) {
+		pr_warn("vcpu%d: request_irq(%d) failed: %d\n",
+			vcpu->ticket.label, ghrsc->irq, ret);
+		goto out;
+	}
+
+	enable_irq_wake(ghrsc->irq);
+	init_completion(&vcpu->ready);
+	vcpu->rsc = ghrsc;
 
 out:
 	mutex_unlock(&vcpu->run_lock);

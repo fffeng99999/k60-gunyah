@@ -1121,9 +1121,16 @@ static void gh_vm_stop(struct gh_vm *ghvm)
 	}
 	up_write(&ghvm->status_lock);
 
-	wait_event(ghvm->vm_status_wait,
-		   ghvm->vm_status == GH_RM_VM_STATUS_EXITED ||
-		   ghvm->vm_status == GH_RM_VM_STATUS_RESET);
+	/*
+	 * Bounded: RM should answer VM_STOP with an EXITED notification, but if
+	 * it does not there is nothing to gain by blocking a workqueue thread
+	 * forever. gh_vm_free() still tries a reset and a deallocate after this.
+	 */
+	if (!wait_event_timeout(ghvm->vm_status_wait,
+				ghvm->vm_status == GH_RM_VM_STATUS_EXITED ||
+				ghvm->vm_status == GH_RM_VM_STATUS_RESET,
+				msecs_to_jiffies(5000)))
+		pr_warn("VM %u: no exit notification within 5s\n", ghvm->vmid);
 }
 
 static void gh_vm_free(struct work_struct *work)

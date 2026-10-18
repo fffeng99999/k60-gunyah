@@ -1,4 +1,132 @@
 // SPDX-License-Identifier: GPL-2.0-only
+EXPORT_SYMBOL_GPL(gh_rm_set_vm_boot_context);
+#define GH_RM_NO_IRQ_ALLOC	(-1)
+
+/* The vIRQ base comes from the RM node, same property gh_rm_core.c reads. */
+static int gh_rm_vmmgr_base_virq(void)
+{
+	struct device_node *node;
+	u32 base = 0;
+
+	node = of_find_compatible_node(NULL, NULL, "qcom,resource-manager-1-0");
+	if (!node)
+		return -ENODEV;
+
+	if (of_property_read_u32(node, "qcom,free-irq-start", &base))
+		base = 0;
+
+	of_node_put(node);
+	return base;
+}
+
+/* Ask RM to bind @virq to @virq_handle. Returns the virq on success. */
+static int gh_rm_vmmgr_irq_accept(u32 virq_handle, s32 virq)
+{
+	struct gh_vm_irq_accept_req_payload req = {
+		.virq_handle = virq_handle,
+		.virq = virq,
+	};
+	struct gh_vm_irq_accept_resp_payload *resp;
+	size_t resp_size;
+	int rm_err, ret;
+
+	resp = gh_rm_call(GH_RM_RPC_MSG_ID_CALL_VM_IRQ_ACCEPT,
+			  &req, sizeof(req), &resp_size, &rm_err);
+	if (rm_err) {
+		pr_err("VM_IRQ_ACCEPT(handle=%u virq=%d) rejected: rm_err=%d\n",
+		       virq_handle, virq, rm_err);
+		return gh_remap_error(rm_err);
+	}
+	if (IS_ERR_OR_NULL(resp)) {
+		pr_err("VM_IRQ_ACCEPT failed: %ld\n", PTR_ERR(resp));
+		return PTR_ERR(resp);
+	}
+	if (resp_size != sizeof(*resp)) {
+		kfree(resp);
+		return -EBADMSG;
+	}
+
+	ret = resp->virq;
+	kfree(resp);
+
+	return ret < 0 ? -EINVAL : ret;
+}
+
+/* Release a vIRQ handle back to RM. */
+static void gh_rm_vmmgr_irq_release(u32 virq_handle)
+{
+	struct gh_vm_irq_release_req_payload req = {
+		.virq_handle = virq_handle,
+	};
+	size_t resp_size;
+	int rm_err;
+	void *resp;
+
+	resp = gh_rm_call(GH_RM_RPC_MSG_ID_CALL_VM_IRQ_RELEASE,
+			  &req, sizeof(req), &resp_size, &rm_err);
+	if (rm_err || IS_ERR_OR_NULL(resp))
+		pr_warn("VM_IRQ_RELEASE(%u) failed: rm_err=%d ret=%ld\n",
+			virq_handle, rm_err, PTR_ERR(resp));
+	else
+		kfree(resp);
+}
+
+/*
+ * Bind a hypervisor resource vIRQ and return the Linux IRQ for it.
+ *
+ * Follows the vendor gh_rm_get_irq() exactly: when RM asks the host to
+ * allocate (virq == -1), take one from the RM IRQ domain and accept it,
+ * then translate the vIRQ into a Linux IRQ through the RM IRQ domain.
+ * Returning the raw vIRQ here, as an earlier revision did, would hand
+ * request_irq() a number that is not a Linux IRQ at all.
+ */
+int gh_rm_vm_bind_virq(u32 virq_handle, s32 virq)
+{
+	int ret;
+
+	/* Some resources (doorbell TX) have no interrupt at all. */
+	if (!virq_handle && !virq)
+		return 0;
+
+	if (virq == GH_RM_NO_IRQ_ALLOC) {
+		int base = gh_rm_vmmgr_base_virq();
+
+		if (base < 0) {
+			pr_warn("no RM node for qcom,free-irq-start\n");
+			return base;
+		}
+
+		ret = gh_get_virq(base, virq);
+		if (ret < 0) {
+			pr_warn("gh_get_virq(%d) failed: %d\n", base, ret);
+			return ret;
+		}
+		virq = ret;
+
+		ret = gh_rm_vmmgr_irq_accept(virq_handle, virq);
+		if (ret < 0) {
+			gh_put_virq(virq);
+			return ret;
+		}
+	}
+
+	ret = gh_rm_virq_to_irq(virq, IRQ_TYPE_EDGE_RISING);
+	if (ret < 0)
+		pr_warn("gh_rm_virq_to_irq(%d) failed: %d\n", virq, ret);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(gh_rm_vm_bind_virq);
+
+void gh_rm_vm_unbind_virq(u32 virq_handle, int linux_irq)
+{
+	/* Mirrors the vendor gh_rm_put_irq(): drop the Linux IRQ, then the
+	 * vIRQ handle. gh_put_irq() returning 0 means it was ours to free.
+	 */
+	if (!gh_put_irq(linux_irq))
+		gh_rm_vmmgr_irq_release(virq_handle);
+}
+EXPORT_SYMBOL_GPL(gh_rm_vm_unbind_virq);
 /*
  * K60 in-tree Resource Manager extensions for the VM manager.
  *
@@ -21,8 +149,11 @@
 #define pr_fmt(fmt) "gh_rm_vmmgr: " fmt
 
 #include <linux/slab.h>
+#include <linux/jiffies.h>
 #include <linux/wait.h>
+#include <linux/irq.h>
 #include <linux/notifier.h>
+#include <linux/of.h>
 #include <linux/string.h>
 
 #include <linux/gunyah/gh_common.h>
