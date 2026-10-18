@@ -88,21 +88,35 @@ jobs:
           strings out/kernel/Image | grep -m1 'Gunyah VM manager loaded'
           sha256sum out/kernel/Image out/kernel/System.map
 
-      - name: Build userspace probe
+      - name: Cross-compile userspace probe
         run: |
           set -euxo pipefail
-          command -v aarch64-linux-musl-gcc || sudo apt-get install -y --no-install-recommends musl-tools
-          # The probe is built on device if no cross toolchain is present.
-          echo "probe source: scripts/vmmgr_probe.c"
+          command -v aarch64-linux-gnu-gcc || \
+            sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+          # Syntax and ABI check only. The real build happens on device, or
+          # with a static musl toolchain, because glibc on CI is not what
+          # Android ships.
+          aarch64-linux-gnu-gcc -std=gnu11 -Wall -Wextra -O2 \
+            -o out/vmmgr_probe scripts/vmmgr_probe.c
+          file out/vmmgr_probe
 
-      - name: Pack boot.img
+      # The stock boot.img is not committed (it is a firmware image), so the
+      # repack runs on the workstation after downloading the Image. See
+      # KERNEL_BUILD.md section 6.
+      - name: Pack boot.img (skipped, needs stock boot_a.img)
         run: |
           set -euxo pipefail
-          python3 scripts/repack_boot_v4.py \
-            --stock-boot "$PWD/boot_a.img" \
-            --kernel "$PWD/out/kernel/Image" \
-            --output "$PWD/out/boot_vmmgr.img"
-          ls -l out/boot_vmmgr.img
+          if [[ -f "$PWD/boot_a.img" ]]; then
+            python3 scripts/repack_boot_v4.py \
+              --stock-boot "$PWD/boot_a.img" \
+              --kernel "$PWD/out/kernel/Image" \
+              --output "$PWD/out/boot_vmmgr.img"
+            ls -l out/boot_vmmgr.img
+          else
+            echo "boot_a.img absent; skip repack. Run locally:"
+            echo "  python3 scripts/repack_boot_v4.py --stock-boot <boot_a.img> \\"
+            echo "    --kernel out/kernel/Image --output out/boot_vmmgr.img"
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -114,6 +128,6 @@ jobs:
             out/kernel/kernel.config
             out/kernel/vmlinux.symvers
             out/boot_vmmgr.img
-            scripts/vmmgr_probe.c
+            out/vmmgr_probe
           if-no-files-found: error
           retention-days: 30

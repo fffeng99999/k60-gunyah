@@ -1131,8 +1131,16 @@ static void gh_vm_free(struct work_struct *work)
 	gh_vm_remove_functions(ghvm);
 	gh_vm_free_resources(ghvm);
 
-	if (ghvm->vm_status != GH_RM_VM_STATUS_NO_STATE &&
-	    ghvm->vm_status != GH_RM_VM_STATUS_RESET) {
+	/*
+	 * Only reset a VM that actually reached a running or ready state.
+	 * RM rejects VM_RESET for a VM it only allocated, which is the EPERM
+	 * the tree-out-of-tree module hit in phase 2. Resetting there is not
+	 * needed anyway: nothing was configured.
+	 */
+	if (ghvm->vm_status == GH_RM_VM_STATUS_RUNNING ||
+	    ghvm->vm_status == GH_RM_VM_STATUS_READY ||
+	    ghvm->vm_status == GH_RM_VM_STATUS_INIT_FAILED ||
+	    ghvm->vm_status == GH_RM_VM_STATUS_EXITED) {
 		ret = gh_rm_vm_reset_sync(ghvm->vmid);
 		if (ret)
 			pr_warn("reset VM %u: %d\n", ghvm->vmid, ret);
