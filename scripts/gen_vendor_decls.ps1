@@ -59,5 +59,21 @@ $L.Add("")
 foreach ($n in $names) { $L.Add("int $n(void);") }
 $L.Add("")
 $L.Add("#endif")
+
+# Also record every struct/enum/union TAG the vendor headers declare.
+# The kernel has one tag namespace, so a UAPI type named gh_vm_status
+# collides with the vendor struct gh_vm_status and the build fails with
+# "use of gh_vm_status with tag type that does not match". That happened
+# once; this list is what stops it recurring.
+$tags = New-Object System.Collections.ArrayList
+foreach ($h in (Get-ChildItem "$VendorDir\include\*.h") + @(Get-Item "$VendorDir\gh_rm_drv_private.h")) {
+    $txt = Get-Content $h.FullName -Raw
+    [regex]::Matches($txt, "(?m)^\s*(struct|enum|union)\s+(\w+)\s*\{") | ForEach-Object {
+        $t = "$($_.Groups[1].Value) $($_.Groups[2].Value)"
+        if ($tags -notcontains $t) { [void]$tags.Add($t) }
+    }
+}
+$tags.Sort()
+foreach ($t in $tags) { $L.Add("/* vendor-tag: $t */") }
 Set-Content -Path $Out -Value ($L -join "`n") -Encoding utf8
-Write-Output "wrote $Out with $($names.Count) declarations"
+Write-Output "wrote $Out with $($names.Count) declarations and $($tags.Count) vendor tags"

@@ -654,6 +654,30 @@ foreach ($f in $kernSrc) {
     }
 }
 
+# ------------------------------------------- 5b. tag collisions
+#
+# C has a single tag namespace, so "struct gh_vm_status" here and
+# "enum gh_vm_status" in a UAPI header collide even though the kinds
+# differ. That exact clash failed a build: the vendor tree has
+# "struct gh_vm_status" and the Gunyah UAPI used to define
+# "enum gh_vm_status". Compare tag NAMES, not kinds.
+$vendorTags = @{}
+$declsFile = Join-Path $SrcDir "gh_vendor_decls.h"
+if (Test-Path $declsFile) {
+    Select-String -Path $declsFile -Pattern "vendor-tag: (?:struct|enum|union) (\w+)" | ForEach-Object {
+        $vendorTags[$_.Matches[0].Groups[1].Value] = $true
+    }
+}
+foreach ($h in $ourHdr) {
+    $txt = Get-Content $h.FullName -Raw
+    [regex]::Matches($txt, "(?m)^\s*(?:struct|enum|union)\s+(\w+)\s*\{") | ForEach-Object {
+        $tag = $_.Groups[1].Value
+        if ($vendorTags.ContainsKey($tag)) {
+            Add-Finding $h.Name "tag $tag collides with a vendor tag"
+        }
+    }
+}
+
 # ------------------------------------------- 6. kernel 5.10 API surface
 #
 # Everything below was verified by hand against the exact 5.10.252 tree

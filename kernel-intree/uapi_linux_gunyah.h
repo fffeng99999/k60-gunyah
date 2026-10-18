@@ -96,7 +96,7 @@ struct gh_fn_desc {
 #define GH_VM_ADD_FUNCTION		_IOW(GH_IOCTL_TYPE, 0x4, struct gh_fn_desc)
 #define GH_VM_REMOVE_FUNCTION		_IOW(GH_IOCTL_TYPE, 0x7, struct gh_fn_desc)
 
-enum gh_vm_status {
+enum gh_vm_exit_status {
 	GH_VM_STATUS_LOAD_FAILED	= 1,
 	GH_VM_STATUS_EXITED		= 2,
 	GH_VM_STATUS_CRASHED		= 3,
@@ -135,7 +135,7 @@ struct gh_vcpu_run {
 		} mmio;
 
 		struct {
-			enum gh_vm_status status;
+			enum gh_vm_exit_status status;
 			struct gh_vm_exit_info exit_info;
 		} status;
 
