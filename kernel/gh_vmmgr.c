@@ -43,7 +43,6 @@
 static dev_t gh_vmmgr_dev;
 static struct cdev gh_vmmgr_cdev;
 static struct class *gh_vmmgr_class;
-static struct device *gh_vmmgr_device;
 
 static DEFINE_MUTEX(gh_vmmgr_lock);
 static unsigned int gh_vmmgr_vmid;
