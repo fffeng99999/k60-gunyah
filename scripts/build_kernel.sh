@@ -62,8 +62,14 @@ if ! grep -q '^CONFIG_GH_RM_DRV=m$' "$KERNEL_SRC/.config"; then
     exit 1
 fi
 
-make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" Image
-make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" modules
+# Build Image and modules in ONE invocation.
+#
+# Running "make Image" and then "make modules" as two separate invocations
+# loses the .tmp_* rebuild bookkeeping between them, and the second pass
+# re-runs trace header generation with the wrong include path, failing on
+# drivers/soc/qcom/dcvs/trace-dcvs.h and drivers/clk/qcom/trace.h. Both
+# failures are unrelated to Gunyah; they are an artefact of the split.
+make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" Image modules
 
 install -m 0644 "$KERNEL_SRC/arch/arm64/boot/Image" "$OUT_DIR/Image"
 install -m 0644 "$KERNEL_SRC/System.map" "$OUT_DIR/System.map"
