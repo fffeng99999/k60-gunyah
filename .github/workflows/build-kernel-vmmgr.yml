@@ -61,10 +61,14 @@ jobs:
 
       # Cheap gate first: a full kernel build is ~25 minutes, so run the
       # static check and fail in seconds instead.
+      # Cheap gate first: a full kernel build is ~25 minutes, so run the
+      # static check and fail in seconds instead. -KernelSrc also verifies
+      # every kernel API we depend on actually exists in this exact tree;
+      # several did not (rb_find, overflows_type, arm_smccc_1_2_hvc).
       - name: Pre-compile static check
         run: |
           set -euxo pipefail
-          pwsh -NoProfile -File scripts/precompile_check.ps1
+          pwsh -NoProfile -File scripts/precompile_check.ps1 -KernelSrc "$PWD/.work/kernel"
 
       - name: Apply in-tree VM manager
         run: |

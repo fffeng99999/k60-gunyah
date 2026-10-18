@@ -7,10 +7,10 @@
 #define _GH_VM_MGR_H
 
 #include <linux/kref.h>
-#include <linux/list.h>
+
 #include <linux/mutex.h>
 #include <linux/notifier.h>
-#include <linux/rb_node.h>
+#include <linux/list.h>
 #include <linux/rwsem.h>
 #include <linux/types.h>
 #include <linux/wait.h>
@@ -20,6 +20,13 @@
 #include "gh_vm_mgr_compat.h"
 
 #include <uapi/linux/gunyah.h>
+
+/*
+ * Forward declaration: struct gh_vm is completed further down, but
+ * gh_vm_function_instance and gh_vm_resource_ticket already hold pointers
+ * to it.
+ */
+struct gh_vm;
 
 #define GH_VM_MAX_BOOT_CTX	8
 
@@ -123,7 +130,7 @@ struct gh_vm_resource_ticket {
 struct gh_vm_io_handler_ops;
 
 struct gh_vm_io_handler {
-	struct rb_node node;
+	struct list_head node;
 	u64 addr;
 
 	bool datamatch;
@@ -157,7 +164,11 @@ struct gh_vm {
 	struct gh_vm_firmware_config fw_config;
 
 	struct notifier_block nb;
-	enum gh_rm_vm_status vm_status;
+	/*
+	 * The vendor header defines GH_RM_VM_STATUS_* as macros, not as an enum,
+	 * so this cannot be typed 'enum gh_rm_vm_status'. u8 is wide enough.
+	 */
+	u8 vm_status;
 	wait_queue_head_t vm_status_wait;
 	struct rw_semaphore status_lock;
 	struct gh_vm_exit_info exit_info;
@@ -172,7 +183,7 @@ struct gh_vm {
 	struct mutex resources_lock;
 	struct list_head resources;
 	struct list_head resource_tickets;
-	struct rb_root mmio_handler_root;
+	struct list_head mmio_handlers;
 	struct rw_semaphore mmio_handler_lock;
 
 	struct gh_vm_boot_ctx_entry boot_ctx[GH_VM_MAX_BOOT_CTX];

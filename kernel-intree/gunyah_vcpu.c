@@ -120,7 +120,7 @@ static int gh_vcpu_rm_notification(struct notifier_block *nb,
 	return NOTIFY_OK;
 }
 
-static inline enum gh_vm_status remap_vm_status(enum gh_rm_vm_status rm_status)
+static inline enum gh_vm_status remap_vm_status(u8 rm_status)
 {
 	switch (rm_status) {
 	case GH_RM_VM_STATUS_INIT_FAILED:

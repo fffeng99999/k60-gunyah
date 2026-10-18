@@ -22,7 +22,7 @@
 #include <uapi/linux/gunyah.h>
 
 #include "vm_mgr.h"
-#include "gunyah_hvc_compat.h"
+#include "hcall_dbl.h"
 
 struct gh_irqfd {
 	struct gh_resource *ghrsc;
@@ -45,8 +45,7 @@ static int irqfd_wakeup(wait_queue_entry_t *wait, unsigned int mode,
 
 	if (flags & EPOLLIN) {
 		if (irqfd->ghrsc) {
-			ret = gh_hypercall_bell_send(irqfd->ghrsc->capid, 1,
-						     NULL);
+			ret = gh_hcall_dbl_send(irqfd->ghrsc->capid, 1, NULL);
 			if (ret)
 				pr_err_ratelimited("inject irq %u: %d\n",
 						   irqfd->ticket.label, ret);
@@ -85,7 +84,7 @@ static bool gh_irqfd_populate(struct gh_vm_resource_ticket *ticket,
 		 * the bell clear it again (ack_mask). Without this the line
 		 * stays asserted and interrupts storm.
 		 */
-		ret = gh_hypercall_bell_set_mask(irqfd->ghrsc->capid, 1, 1);
+		ret = gh_hcall_dbl_mask(irqfd->ghrsc->capid, 1, 1);
 		if (ret)
 			pr_warn("irqfd%u not level triggered\n",
 				irqfd->ticket.label);

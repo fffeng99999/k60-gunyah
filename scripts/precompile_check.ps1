@@ -13,6 +13,10 @@
 # Usage:  pwsh scripts/precompile_check.ps1
 # Exit 0 = clean, 1 = findings.
 
+param(
+    [string]$KernelSrc = ""
+)
+
 $ErrorActionPreference = "Stop"
 
 $Root      = Split-Path -Parent $PSScriptRoot
@@ -555,26 +559,36 @@ foreach ($h in @($ourHdr) + @($venHdr)) {
 
 foreach ($f in $kernSrc) {
     $lines2 = [System.IO.File]::ReadAllLines($f.FullName)
+
+    # Record every "struct X *name" declaration with its line number, then
+    # resolve each "name->member" against the NEAREST preceding
+    # declaration. A variable name can be reused for a different struct in
+    # another function, so a single binding per name is wrong.
+    $decls = @()
     for ($i = 0; $i -lt $lines2.Count; $i++) {
-        $l = $lines2[$i]
-        if ($l -match "^\s*(//|\*|/\*)") { continue }
-        if ($l -match "struct\s+(\w+)\s*\*\s*(\w+)\s*[;=]") {
-            $sname = $Matches[1]; $vname = $Matches[2]
-            if (-not $structMembers.ContainsKey($sname)) { continue }
-            $mem = $structMembers[$sname]
-            for ($j = $i + 1; $j -lt [Math]::Min($i + 200, $lines2.Count); $j++) {
-                $m = [regex]::Matches($lines2[$j], ("\b" + [regex]::Escape($vname) + "\s*->\s*(\w+)"))
-                foreach ($mm in $m) {
-                    $member = $mm.Groups[1].Value
-                    if (-not $mem.ContainsKey($member)) {
-                        Add-Finding "$($f.Name):$($j+1)" "struct $sname has no member $member (via $vname)"
-                    }
-                }
+        if ($lines2[$i] -match "^\s*(//|\*|/\*)") { continue }
+        foreach ($m in [regex]::Matches($lines2[$i], "struct\s+(\w+)\s*\*\s*(\w+)\s*[;=,)]")) {
+            $decls += [pscustomobject]@{ Line = $i; Type = $m.Groups[1].Value; Name = $m.Groups[2].Value }
+        }
+    }
+
+    for ($i = 0; $i -lt $lines2.Count; $i++) {
+        if ($lines2[$i] -match "^\s*(//|\*|/\*)") { continue }
+        foreach ($u in [regex]::Matches($lines2[$i], "\b(\w+)\s*->\s*(\w+)")) {
+            $vname = $u.Groups[1].Value
+            $member = $u.Groups[2].Value
+            $decl = $null
+            foreach ($d in $decls) {
+                if ($d.Name -eq $vname -and $d.Line -lt $i) { $decl = $d }
+            }
+            if (-not $decl) { continue }
+            if (-not $structMembers.ContainsKey($decl.Type)) { continue }
+            if (-not $structMembers[$decl.Type].ContainsKey($member)) {
+                Add-Finding "$($f.Name):$($i+1)" "struct $($decl.Type) has no member $member (via $vname)"
             }
         }
     }
 }
-
 # ------------------------------------------- 3. declaration after stmt
 foreach ($f in $kernSrc) {
     $lines2 = [System.IO.File]::ReadAllLines($f.FullName)
@@ -629,6 +643,72 @@ foreach ($f in $kernSrc) {
             Add-Finding $f.Name "export $n collides with vendor $($vendorExports[$n])"
         }
     }
+}
+
+# ------------------------------------------- 6. kernel 5.10 API surface
+#
+# Everything below was verified by hand against the exact 5.10.252 tree
+# after several of them turned out not to exist (rb_find, rb_find_add,
+# overflows_type, enum gh_rm_vm_status, arm_smccc_1_2_hvc). Pass
+# -KernelSrc to check them again against the real source tree; this is
+# what the CI does, since it has the tree but not the vendor reference
+# headers.
+$apiChecks = @(
+    @("xa_err",                          "include/linux/xarray.h"),
+    @("xa_is_err",                       "include/linux/xarray.h"),
+    @("xa_erase",                        "include/linux/xarray.h"),
+    @("xa_store",                        "include/linux/xarray.h"),
+    @("xa_load",                         "include/linux/xarray.h"),
+    @("account_locked_vm",               "include/linux/mm.h"),
+    @("pin_user_pages_fast",             "include/linux/mm.h"),
+    @("unpin_user_pages",                "include/linux/mm.h"),
+    @("FOLL_LONGTERM",                   "include/linux/mm.h"),
+    @("kref_get_unless_zero",            "include/linux/kref.h"),
+    @("compat_ptr_ioctl",                "include/linux/fs.h"),
+    @("noop_llseek",                     "include/linux/fs.h"),
+    @("anon_inode_getfile",              "include/linux/anon_inodes.h"),
+    @("get_unused_fd_flags",             "include/linux/file.h"),
+    @("init_poll_funcptr",               "include/linux/poll.h"),
+    @("key_to_poll",                     "include/linux/wait.h"),
+    @("poll_to_key",                     "include/linux/wait.h"),
+    @("init_waitqueue_func_entry",       "include/linux/wait.h"),
+    @("enable_irq_wake",                 "include/linux/interrupt.h"),
+    @("IRQF_TRIGGER_RISING",             "include/linux/interrupt.h"),
+    @("mmgrab",                          "include/linux/sched/mm.h"),
+    @("mmdrop",                          "include/linux/sched/mm.h"),
+    @("u64_to_user_ptr",                 "include/linux/kernel.h"),
+    @("struct miscdevice",               "include/linux/miscdevice.h"),
+    @("misc_register",                   "include/linux/miscdevice.h"),
+    @("vm_fault_t",                      "include/linux/mm_types.h"),
+    @("struct vm_fault",                 "include/linux/mm_types.h"),
+    @("eventfd_ctx_fileget",             "include/linux/eventfd.h"),
+    @("eventfd_ctx_remove_wait_queue",   "include/linux/eventfd.h"),
+    @("min_t",                           "include/linux/minmax.h"),
+    @("_gh_hcall",                       "arch/arm64/include/asm/gunyah/hcall.h"),
+    @("struct gh_hcall_resp",            "include/linux/gunyah/hcall_common.h"),
+    @("gh_hcall_dbl_send",               "drivers/virt/gunyah/hcall_dbl.h"),
+    @("gh_hcall_dbl_mask",               "drivers/virt/gunyah/hcall_dbl.h")
+)
+
+if ($KernelSrc -ne "") {
+    if (-not (Test-Path (Join-Path $KernelSrc "Makefile"))) {
+        Add-Finding "kernel-src" "-KernelSrc is not a kernel tree: $KernelSrc"
+    } else {
+        foreach ($c in $apiChecks) {
+            $sym = $c[0]; $rel = $c[1]
+            $full = Join-Path $KernelSrc $rel
+            if (-not (Test-Path $full)) {
+                Add-Finding "5.10-api" "no $rel (needed for $sym)"
+                continue
+            }
+            if (-not (Select-String -Path $full -SimpleMatch -Pattern $sym -Quiet)) {
+                Add-Finding "5.10-api" "$sym missing from $rel"
+            }
+        }
+        Write-Output "   kernel API surface checked against $KernelSrc"
+    }
+} else {
+    Write-Output "   note: -KernelSrc not given; 5.10 API surface check skipped"
 }
 
 # ----------------------------------------------------------- report

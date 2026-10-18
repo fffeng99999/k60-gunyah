@@ -66,7 +66,7 @@ static long gh_ioeventfd_bind(struct gh_vm_function_instance *f)
 		return -EINVAL;
 	}
 
-	if (overflows_type(args->addr + args->len, u64))
+	if (args->addr + args->len < args->addr)
 		return -EINVAL;
 
 	/* a zero-length ioeventfd cannot use datamatch */

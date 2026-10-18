@@ -28,6 +28,7 @@
 #include <linux/eventfd.h>
 #include <linux/file.h>
 #include <linux/fs.h>
+#include <linux/kernel.h>
 #include <linux/kref.h>
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
@@ -131,7 +132,7 @@ struct gh_vm_mem *gh_vm_mem_find_by_addr(struct gh_vm *ghvm,
 {
 	struct gh_vm_mem *mapping;
 
-	if (overflows_type(guest_phys_addr + size, u64))
+	if (guest_phys_addr + size < guest_phys_addr)
 		return NULL;
 
 	mutex_lock(&ghvm->mm_lock);
@@ -288,7 +289,8 @@ int gh_vm_mem_alloc(struct gh_vm *ghvm,
 	    !PAGE_ALIGNED(region->guest_phys_addr))
 		return -EINVAL;
 
-	if (overflows_type(region->guest_phys_addr + region->memory_size, u64))
+	if (region->guest_phys_addr + region->memory_size <
+	    region->guest_phys_addr)
 		return -EOVERFLOW;
 
 	ret = mutex_lock_interruptible(&ghvm->mm_lock);
@@ -619,81 +621,74 @@ EXPORT_SYMBOL_GPL(gh_vm_remove_resource_ticket);
 /* MMIO dispatch                                                       */
 /* ------------------------------------------------------------------ */
 
-static int gh_vm_io_handler_compare(struct rb_node *node,
-				    const struct rb_node *parent)
+/*
+ * MMIO handlers are kept on a simple list.
+ *
+ * Upstream 6.6 uses an rbtree here through rb_find()/rb_find_add(), but
+ * neither helper exists in 5.10 (they arrived later). A VMM registers a
+ * handful of ioeventfds, so a linear scan is both sufficient and one less
+ * kernel-version dependency to get wrong.
+ */
+static bool gh_vm_io_handler_matches(const struct gh_vm_io_handler *h,
+				     u64 addr, u32 len, u64 data)
 {
-	struct gh_vm_io_handler *n = container_of(node, struct gh_vm_io_handler,
-						  node);
-	struct gh_vm_io_handler *p = container_of(parent,
-						 struct gh_vm_io_handler,
-						  node);
+	if (h->addr != addr)
+		return false;
 
-	if (n->addr < p->addr)
-		return -1;
-	if (n->addr > p->addr)
-		return 1;
-	if ((n->len && !p->len) || (!n->len && p->len))
-		return 0;
-	if (n->len < p->len)
-		return -1;
-	if (n->len > p->len)
-		return 1;
-	if (n->datamatch != p->datamatch)
-		return 0;
-	if (n->data < p->data)
-		return -1;
-	if (n->data > p->data)
-		return 1;
-	return 0;
-}
+	/* len 0 means "any length". */
+	if (h->len && len && h->len != len)
+		return false;
 
-static int gh_vm_io_handler_find(const void *key, const struct rb_node *node)
-{
-	const struct gh_vm_io_handler *k = key;
+	if (h->datamatch && h->data != data)
+		return false;
 
-	return gh_vm_io_handler_compare(&k->node, node);
+	return true;
 }
 
 int gh_vm_mmio_write(struct gh_vm *ghvm, u64 addr, u32 len, u64 data)
 {
-	struct gh_vm_io_handler key = {
-		.addr = addr,
-		.len = len,
-		.datamatch = true,
-		.data = data,
-	};
 	struct gh_vm_io_handler *io_hdlr;
-	int ret;
+	int ret = -ENODEV;
 
 	down_read(&ghvm->mmio_handler_lock);
-	io_hdlr = rb_find(&key, &ghvm->mmio_handler_root,
-			  gh_vm_io_handler_find);
-	if (!io_hdlr || !io_hdlr->ops || !io_hdlr->ops->write) {
-		ret = -ENODEV;
-		goto out;
-	}
+	list_for_each_entry(io_hdlr, &ghvm->mmio_handlers, node) {
+		if (!gh_vm_io_handler_matches(io_hdlr, addr, len, data))
+			continue;
+		if (!io_hdlr->ops || !io_hdlr->ops->write)
+			continue;
 
-	ret = io_hdlr->ops->write(io_hdlr, addr, len, data);
-out:
+		ret = io_hdlr->ops->write(io_hdlr, addr, len, data);
+		break;
+	}
 	up_read(&ghvm->mmio_handler_lock);
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(gh_vm_mmio_write);
 
 int gh_vm_add_io_handler(struct gh_vm *ghvm, struct gh_vm_io_handler *io_hdlr)
 {
-	struct rb_node *found;
+	struct gh_vm_io_handler *iter;
+	int ret = 0;
 
 	if (io_hdlr->datamatch && (!io_hdlr->len ||
 				   io_hdlr->len > sizeof(io_hdlr->data)))
 		return -EINVAL;
 
 	down_write(&ghvm->mmio_handler_lock);
-	found = rb_find_add(&io_hdlr->node, &ghvm->mmio_handler_root,
-			    gh_vm_io_handler_compare);
-	up_write(&ghvm->mmio_handler_lock);
+	list_for_each_entry(iter, &ghvm->mmio_handlers, node) {
+		if (gh_vm_io_handler_matches(iter, io_hdlr->addr,
+					     io_hdlr->len, io_hdlr->data) &&
+		    iter->datamatch == io_hdlr->datamatch) {
+			ret = -EEXIST;
+			goto out;
+		}
+	}
 
-	return found ? -EEXIST : 0;
+	list_add_tail(&io_hdlr->node, &ghvm->mmio_handlers);
+out:
+	up_write(&ghvm->mmio_handler_lock);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(gh_vm_add_io_handler);
 
@@ -701,7 +696,7 @@ void gh_vm_remove_io_handler(struct gh_vm *ghvm,
 			     struct gh_vm_io_handler *io_hdlr)
 {
 	down_write(&ghvm->mmio_handler_lock);
-	rb_erase(&io_hdlr->node, &ghvm->mmio_handler_root);
+	list_del(&io_hdlr->node);
 	up_write(&ghvm->mmio_handler_lock);
 }
 EXPORT_SYMBOL_GPL(gh_vm_remove_io_handler);
@@ -953,7 +948,7 @@ static __must_check struct gh_vm *gh_vm_alloc(void)
 	INIT_LIST_HEAD(&ghvm->resources);
 	INIT_LIST_HEAD(&ghvm->resource_tickets);
 	init_rwsem(&ghvm->mmio_handler_lock);
-	ghvm->mmio_handler_root = RB_ROOT;
+	INIT_LIST_HEAD(&ghvm->mmio_handlers);
 	INIT_LIST_HEAD(&ghvm->functions);
 	ghvm->vm_status = GH_RM_VM_STATUS_NO_STATE;
 
@@ -1254,8 +1249,8 @@ static long gh_vm_ioctl(struct file *filp, unsigned int cmd,
 		if (copy_from_user(&dtb_config, argp, sizeof(dtb_config)))
 			return -EFAULT;
 
-		if (overflows_type(dtb_config.guest_phys_addr +
-				   dtb_config.size, u64))
+		if (dtb_config.guest_phys_addr + dtb_config.size <
+		    dtb_config.guest_phys_addr)
 			return -EOVERFLOW;
 
 		ghvm->dtb_config = dtb_config;

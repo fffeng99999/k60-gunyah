@@ -62,14 +62,29 @@ if ! grep -q '^CONFIG_GH_RM_DRV=m$' "$KERNEL_SRC/.config"; then
     exit 1
 fi
 
-# Build Image and modules in ONE invocation.
+# Build the kernel Image first. This is the step that has been proven to
+# work; it does not compile any modules.
+make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" Image
+
+# modules_prepare is cheap and guarantees the module build scaffolding is
+# in place even if a future kernel version stops doing it as a side effect
+# of building Image.
+make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" modules_prepare
+
+# Then build ONLY drivers/virt/gunyah, not the whole module tree.
 #
-# Running "make Image" and then "make modules" as two separate invocations
-# loses the .tmp_* rebuild bookkeeping between them, and the second pass
-# re-runs trace header generation with the wrong include path, failing on
-# drivers/soc/qcom/dcvs/trace-dcvs.h and drivers/clk/qcom/trace.h. Both
-# failures are unrelated to Gunyah; they are an artefact of the split.
-make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" Image modules
+# A full "make modules" fails in this vendor tree for reasons unrelated to
+# Gunyah: drivers/clk/qcom/trace.h and drivers/soc/qcom/dcvs/trace-dcvs.h
+# set TRACE_INCLUDE_PATH to ".", so include/trace/define_trace.h expands to
+# #include "./trace.h", which resolves relative to include/trace/ and does
+# not exist. Those modules are not ours and we do not ship them.
+#
+# Everything the VM manager needs lives in drivers/virt/gunyah: gh_rm_drv
+# (which now also contains gh_rm_vmmgr.o), gh_msgq, gh_dbl, gh_arm_drv and
+# gh_vm_mgr itself. Building that one directory with M= sidesteps the broken
+# trace headers entirely and is also far faster.
+make -C "$KERNEL_SRC" "${MAKE_ARGS[@]}" -j"$JOBS" \
+    M=drivers/virt/gunyah modules
 
 install -m 0644 "$KERNEL_SRC/arch/arm64/boot/Image" "$OUT_DIR/Image"
 install -m 0644 "$KERNEL_SRC/System.map" "$OUT_DIR/System.map"

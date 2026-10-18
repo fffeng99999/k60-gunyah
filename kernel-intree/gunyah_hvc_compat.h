@@ -2,26 +2,55 @@
 /*
  * Gunyah hypervisor interface for the K60 in-tree VM manager.
  *
- * The 5.10 vendor tree ships hcall_ctrl.h / hcall_dbl.h / hcall_msgq.h /
- * hcall_virtio.h but NOT the 6.6 linux/gunyah.h that declares the vCPU run
- * hypercall, the bell send/set-mask hypercalls, or the hyp-identify
- * wrapper. The VM manager and its vCPU function need all of those.
+ * The 5.10 vendor tree does NOT have 6.6's linux/gunyah.h, and it does not
+ * have arm_smccc_1_2_hvc() either (that arrived in a later kernel). What it
+ * does have is arch/arm64/include/asm/gunyah/hcall.h, whose _gh_hcall()
+ * passes the function id as the HVC immediate and returns all eight
+ * argument registers. That is what this file is built on.
  *
- * Only the pieces actually used are declared, with the same numbers the
- * 6.6 arch/arm64/gunyah/gunyah_hypercall.c uses.
+ * Function numbering differs from mainline in the base only:
+ *
+ *   mainline 6.6        this device (vendor 5.10)
+ *   HYP_IDENTIFY  0x8000        0x6000
+ *   BELL_SEND     0x8012        0x6012
+ *   BELL_SET_MASK 0x8015        0x6015
+ *   MSGQ_SEND     0x801B        0x601B
+ *   MSGQ_RECV     0x801C        0x601C
+ *   VCPU_RUN      0x8065        0x6065
+ *
+ * The offsets are identical; only the base differs. Verified against
+ * drivers/virt/gunyah/hcall_ctrl.h, hcall_dbl.h and hcall_msgq.h in the
+ * 5.10.252 tree, and against the working hyp-identify probe that used
+ * 0x6000 on this device.
+ *
+ * Bell send / set-mask are NOT reimplemented here: the vendor tree already
+ * provides gh_hcall_dbl_send() and gh_hcall_dbl_mask() in hcall_dbl.h.
  */
 
 #ifndef _GUNYAH_HVC_COMPAT_H
 #define _GUNYAH_HVC_COMPAT_H
 
-#include <linux/arm-smccc.h>
 #include <linux/errno.h>
 #include <linux/types.h>
 
+#include <linux/gunyah/gh_common.h>
+
+#include <asm/gunyah/hcall.h>
+#include <linux/gunyah/hcall_common.h>
+
+/* Hypercall function ids on this device. */
+#define GH_HCALL_HYP_IDENTIFY		0x6000
+#define GH_HCALL_DBL_SEND		0x6012
+#define GH_HCALL_DBL_SET_MASK		0x6015
+#define GH_HCALL_MSGQ_SEND		0x601B
+#define GH_HCALL_MSGQ_RECV		0x601C
+#define GH_HCALL_VCPU_RUN		0x6065
+
 /*
- * Hypervisor error codes. These match gh_errno.h in the vendor tree; they
- * are repeated here because the 6.6 enum form is needed by the switch in
- * gh_vcpu_run().
+ * Hypervisor error codes, in the form _gh_hcall() returns them.
+ *
+ * These match include/linux/gunyah/gh_errno.h, repeated as an enum because
+ * the vCPU loop switches on them.
  */
 enum gh_error {
 	GH_ERROR_OK			= 0,
@@ -48,7 +77,7 @@ enum gh_error {
 	GH_ERROR_CSPACE_CAP_NULL	= 50,
 	GH_ERROR_CSPACE_CAP_REVOKED	= 51,
 	GH_ERROR_CSPACE_WRONG_OBJ_TYPE	= 52,
-	GH_ERROR_CSPACE_CAP_INSUF_RIGHTS	= 53,
+	GH_ERROR_CSPACE_INSUF_RIGHTS	= 53,
 	GH_ERROR_CSPACE_FULL		= 54,
 
 	GH_ERROR_MSGQUEUE_EMPTY		= 60,
@@ -66,7 +95,7 @@ static inline int gh_error_remap(enum gh_error gh_error)
 	case GH_ERROR_CSPACE_CAP_NULL:
 	case GH_ERROR_CSPACE_CAP_REVOKED:
 	case GH_ERROR_CSPACE_WRONG_OBJ_TYPE:
-	case GH_ERROR_CSPACE_CAP_INSUF_RIGHTS:
+	case GH_ERROR_CSPACE_INSUF_RIGHTS:
 	case GH_ERROR_CSPACE_FULL:
 		return -EACCES;
 	case GH_ERROR_BUSY:
@@ -85,23 +114,13 @@ static inline int gh_error_remap(enum gh_error gh_error)
 	}
 }
 
-#define GH_HYPERCALL(fn)	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL, \
-						   ARM_SMCCC_SMC_64, \
-						   ARM_SMCCC_OWNER_VENDOR_HYP, \
-						   fn)
-
-#define GH_HYPERCALL_HYP_IDENTIFY	GH_HYPERCALL(0x8000)
-#define GH_HYPERCALL_BELL_SEND		GH_HYPERCALL(0x8012)
-#define GH_HYPERCALL_BELL_SET_MASK	GH_HYPERCALL(0x8015)
-#define GH_HYPERCALL_MSGQ_SEND		GH_HYPERCALL(0x801B)
-#define GH_HYPERCALL_MSGQ_RECV		GH_HYPERCALL(0x801C)
-#define GH_HYPERCALL_VCPU_RUN		GH_HYPERCALL(0x8065)
-
-struct gh_hypercall_hyp_identify_resp {
-	u64 api_info;
-	u64 flags[3];
-};
-
+/*
+ * vCPU run response.
+ *
+ * The layout matches the 6.6 struct gh_hypercall_vcpu_run_resp, but the
+ * registers arrive through _gh_hcall()'s eight-register response rather
+ * than arm_smccc_1_2_hvc().
+ */
 struct gh_hypercall_vcpu_run_resp {
 	union {
 		enum {
@@ -123,68 +142,35 @@ struct gh_hypercall_vcpu_run_resp {
 	u64 state_data[3];
 };
 
-static inline void gh_hypercall_hyp_identify(
-	struct gh_hypercall_hyp_identify_resp *hyp_identity)
-{
-	struct arm_smccc_res res;
-
-	arm_smccc_1_1_hvc(GH_HYPERCALL_HYP_IDENTIFY, &res);
-
-	hyp_identity->api_info = res.a0;
-	hyp_identity->flags[0] = res.a1;
-	hyp_identity->flags[1] = res.a2;
-	hyp_identity->flags[2] = res.a3;
-}
-
-static inline enum gh_error gh_hypercall_bell_send(u64 capid, u64 new_flags,
-						   u64 *old_flags)
-{
-	struct arm_smccc_res res;
-
-	arm_smccc_1_1_hvc(GH_HYPERCALL_BELL_SEND, capid, new_flags, 0, &res);
-
-	if (res.a0 == GH_ERROR_OK && old_flags)
-		*old_flags = res.a1;
-
-	return res.a0;
-}
-
-static inline enum gh_error gh_hypercall_bell_set_mask(u64 capid,
-						       u64 enable_mask,
-						       u64 ack_mask)
-{
-	struct arm_smccc_res res;
-
-	arm_smccc_1_1_hvc(GH_HYPERCALL_BELL_SET_MASK, capid, enable_mask,
-			  ack_mask, 0, &res);
-
-	return res.a0;
-}
-
+/*
+ * Run a vCPU.
+ *
+ * x0 = capid, x1..x3 = resume_data, x4 = 0.
+ * On return x0 = error, x1 = state, x2..x4 = state_data.
+ *
+ * Note the 6.6 version passes the function id in x0 because it uses the
+ * SMCCC 1.1 HVC #0 convention. Here the id is the HVC immediate, so x0 is
+ * the first real argument. The response register layout is the same either
+ * way, which is why gh_vcpu_run() does not need to care.
+ */
 static inline enum gh_error gh_hypercall_vcpu_run(
 	u64 capid, u64 *resume_data, struct gh_hypercall_vcpu_run_resp *resp)
 {
-	struct arm_smccc_1_2_regs args = {
-		.a0 = GH_HYPERCALL_VCPU_RUN,
-		.a1 = capid,
-		.a2 = resume_data[0],
-		.a3 = resume_data[1],
-		.a4 = resume_data[2],
-		/* C says this is implicitly zero; Gunyah requires 0. */
-		.a5 = 0,
-	};
-	struct arm_smccc_1_2_regs res;
+	struct gh_hcall_resp _resp = { 0 };
 
-	arm_smccc_1_2_hvc(&args, &res);
+	_gh_hcall(GH_HCALL_VCPU_RUN,
+		  (struct gh_hcall_args){ capid, resume_data[0],
+					  resume_data[1], resume_data[2], 0 },
+		  &_resp);
 
-	if (res.a0 == GH_ERROR_OK) {
-		resp->sized_state = res.a1;
-		resp->state_data[0] = res.a2;
-		resp->state_data[1] = res.a3;
-		resp->state_data[2] = res.a4;
+	if (_resp.resp0 == GH_ERROR_OK) {
+		resp->sized_state = _resp.resp1;
+		resp->state_data[0] = _resp.resp2;
+		resp->state_data[1] = _resp.resp3;
+		resp->state_data[2] = _resp.resp4;
 	}
 
-	return res.a0;
+	return (enum gh_error)_resp.resp0;
 }
 
 #endif /* _GUNYAH_HVC_COMPAT_H */
