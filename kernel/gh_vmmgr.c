@@ -68,6 +68,16 @@ MODULE_PARM_DESC(alloc_vmid,
 	"Request a VMID from RM at insmod and print result (default N)");
 
 /*
+ * reset_vmid=1 issues gh_rm_vm_reset() on the held VMID before releasing it.
+ * RM returned EPERM for a direct deallocate, so the reset-first ordering is
+ * the hypothesis under test. Default 0.
+ */
+static bool reset_vmid;
+module_param(reset_vmid, bool, 0400);
+MODULE_PARM_DESC(reset_vmid,
+	"Reset held VMID before deallocating at exit (default N)");
+
+/*
  * The vendor gh_vm_names enum is fixed and has no entry for a user
  * supplied VM, so gh_rm_vm_alloc_vmid() cannot allocate arbitrary VMs.
  * We still drive the exported API so the RM error code is visible in
@@ -100,6 +110,16 @@ static int gh_vmmgr_release_vmid(void)
 
 	if (!gh_vmmgr_registered)
 		return 0;
+
+	/*
+	 * RM rejects a direct deallocate with EPERM unless the VM is in a
+	 * reset state, so always reset first. The reset result is logged but
+	 * does not stop the deallocate attempt.
+	 */
+	ret = gh_rm_vm_reset((gh_vmid_t)gh_vmmgr_vmid);
+	if (ret)
+		pr_warn("gh_rm_vm_reset(%u) failed: %d\n",
+			gh_vmmgr_vmid, ret);
 
 	ret = gh_rm_vm_dealloc_vmid((gh_vmid_t)gh_vmmgr_vmid);
 	if (ret)
@@ -272,6 +292,16 @@ static int __init gh_vmmgr_init(void)
 		}
 		mutex_unlock(&gh_vmmgr_lock);
 		pr_info("alloc_vmid: ret=%d vmid=%u\n", ret, gh_vmmgr_vmid);
+	}
+
+	if (alloc_vmid && reset_vmid && gh_vmmgr_registered) {
+		int reset_ret;
+
+		mutex_lock(&gh_vmmgr_lock);
+		reset_ret = gh_rm_vm_reset((gh_vmid_t)gh_vmmgr_vmid);
+		mutex_unlock(&gh_vmmgr_lock);
+		pr_info("reset_vmid: gh_rm_vm_reset(%u) ret=%d\n",
+			gh_vmmgr_vmid, reset_ret);
 	}
 
 	return 0;
